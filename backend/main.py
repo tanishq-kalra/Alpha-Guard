@@ -42,7 +42,11 @@ app = FastAPI(
 # CORS — allow the Next.js frontend to communicate
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for production compatibility
+    allow_origins=[
+        "https://alpha-guard-nine.vercel.app",  # Production domain
+        "http://localhost:3000",                # Local dev
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
