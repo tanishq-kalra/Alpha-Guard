@@ -5,7 +5,7 @@
  * Backend runs on http://localhost:8000
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://alpha-guard-production.up.railway.app";
+const API_BASE = "https://alpha-guard-production.up.railway.app";
 console.log("API BASE:", API_BASE);
 
 // ── Types matching backend Pydantic models ──
