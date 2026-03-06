@@ -5,7 +5,7 @@
  * Backend runs on http://localhost:8000
  */
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL!;
 
 // ── Types matching backend Pydantic models ──
 
