@@ -142,7 +142,7 @@ async def call_gemini_analysis(mda_text: str) -> dict:
     Returns:
         Parsed JSON dict with sentiment, confidence, and suspicious_sentences.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         # Return a structured fallback when no API key is configured
         return {
@@ -423,7 +423,7 @@ async def api_forensic_audit(request: ForensicRequest) -> ForensicAuditResponse:
     forensic_result = await analyze_filing_text(mda_text, risk_factors_text, z_score_result)
 
     # Step 5: Check for Gemini API
-    if os.environ.get("GEMINI_API_KEY"):
+    if os.getenv("GEMINI_API_KEY"):
         data_sources.append("Google Gemini 2.0 Flash — AI Analysis")
     else:
         data_sources.append("Heuristic Analysis (set GEMINI_API_KEY for AI-powered insights)")
