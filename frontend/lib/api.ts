@@ -118,7 +118,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
         return res.json();
     } catch (err) {
         if (err instanceof ApiError) throw err;
-        throw new ApiError(0, `Network error: Unable to reach Alpha-Guard backend. Is the server running on port 8000?`);
+        throw new ApiError(0, `Network error: Unable to reach backend at ${API_BASE}. Check CORS or if the server is down.`);
     }
 }
 
