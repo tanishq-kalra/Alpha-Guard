@@ -38,6 +38,7 @@ export default function ForensicPage() {
         setIsLoading(true);
         setError(null);
         setTicker(searchTicker);
+        setAuditResult(null);
 
         try {
             const result = await runForensicAudit(searchTicker);
@@ -53,14 +54,15 @@ export default function ForensicPage() {
     const f = auditResult?.forensic;
     const la = f?.linguistic_analysis;
 
+    const zc = f?.z_score_result?.components;
+
     // Map forensic result to RiskRadar data
-    const radarData = f
+    const radarData = f && zc
         ? [
-            { label: "Financial Health", financial: f.z_score_result ? Math.min(100, (f.z_score_result.score / 4) * 100) : 50, narrative: 100 - (la?.hedging_score ?? 50) },
-            { label: "Hedging Level", financial: 100 - (la?.hedging_score ?? 50), narrative: la?.hedging_score ?? 50 },
-            { label: "Evasion Level", financial: 100 - (la?.evasion_score ?? 50), narrative: la?.evasion_score ?? 50 },
-            { label: "Sentiment Align", financial: f.z_score_result?.zone === "Safe" ? 90 : f.z_score_result?.zone === "Gray" ? 50 : 20, narrative: la?.sentiment === "bullish" ? 90 : la?.sentiment === "neutral" ? 50 : 20 },
-            { label: "Truth Score", financial: f.truth_score, narrative: 100 - f.truth_score },
+            { label: "Liquidity (X1)", financial: Math.max(0, Math.min(100, (zc.x1_working_capital_to_total_assets + 0.5) * 100)), narrative: 100 - (la?.hedging_score ?? 50) },
+            { label: "Profitability (X2)", financial: Math.max(0, Math.min(100, (zc.x2_retained_earnings_to_total_assets + 0.5) * 100)), narrative: 100 - (la?.evasion_score ?? 50) },
+            { label: "Efficiency (X3)", financial: Math.max(0, Math.min(100, zc.x3_ebit_to_total_assets * 100)), narrative: la?.sentiment === "bullish" ? 90 : la?.sentiment === "neutral" ? 50 : 20 },
+            { label: "Leverage (X4)", financial: Math.max(0, Math.min(100, zc.x4_market_cap_to_total_liabilities * 20)), narrative: f.truth_score ?? 50 },
         ]
         : undefined;
 
@@ -109,7 +111,6 @@ export default function ForensicPage() {
                     <TickerSearch onSearch={handleSearch} isLoading={isLoading} />
                 </AnimatedSection>
 
-                {/* Error Display */}
                 {error && (
                     <AnimatedSection className="mb-6">
                         <div className="card-glass p-4" style={{ borderColor: "rgba(239,68,68,0.3)" }}>
@@ -123,6 +124,22 @@ export default function ForensicPage() {
                         </div>
                     </AnimatedSection>
                 )}
+
+                {/* AI Offline Alert */}
+                {auditResult && !auditResult.gemini_active && !isLoading && (
+                    <AnimatedSection className="mb-6">
+                        <div className="card-glass p-4" style={{ borderColor: "rgba(245,158,11,0.3)" }}>
+                            <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-ag-amber" />
+                                <div>
+                                    <p className="text-xs font-mono font-semibold text-ag-amber uppercase tracking-wider">AI Analyst Offline</p>
+                                    <p className="text-sm text-ag-text2 mt-0.5">Reverting to Heuristic Math Models.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </AnimatedSection>
+                )}
+
 
                 {/* Loading State */}
                 {isLoading && (

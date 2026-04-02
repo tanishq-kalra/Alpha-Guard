@@ -13,6 +13,28 @@ interface RedFlagTerminalProps {
     flags?: RedFlagEntry[];
 }
 
+const TypewriterText = ({ text, delay = 0 }: { text: string; delay?: number }) => {
+    const [displayed, setDisplayed] = React.useState("");
+
+    React.useEffect(() => {
+        let i = 0;
+        let timer: NodeJS.Timeout;
+        const start = setTimeout(() => {
+            timer = setInterval(() => {
+                setDisplayed(text.substring(0, i));
+                i++;
+                if (i > text.length) clearInterval(timer);
+            }, 10);
+        }, delay);
+        return () => {
+            clearTimeout(start);
+            clearInterval(timer);
+        };
+    }, [text, delay]);
+
+    return <span>{displayed}</span>;
+};
+
 const MOCK_FLAGS: RedFlagEntry[] = [
     {
         sentence:
@@ -138,7 +160,7 @@ export default function RedFlagTerminal({ flags = MOCK_FLAGS }: RedFlagTerminalP
                             <div className="flex gap-2">
                                 <span className="text-ag-muted text-[10px] mt-0.5 shrink-0">▸</span>
                                 <p className="text-[11px] text-ag-text2 leading-relaxed">
-                                    {flag.explanation}
+                                    <TypewriterText text={flag.explanation} delay={i * 200 + 300} />
                                 </p>
                             </div>
                         </div>

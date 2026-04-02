@@ -85,16 +85,22 @@ export default function TruthScoreGauge({
                         />
                     )}
                     {/* Score text */}
-                    <text
-                        x={cx}
-                        y={cy - 10}
-                        textAnchor="middle"
-                        className="font-mono font-bold"
-                        fill={isPending ? "var(--text-muted)" : config.color}
-                        fontSize="36"
-                    >
-                        {isPending ? "—" : score}
-                    </text>
+                    {isPending ? (
+                        <foreignObject x={cx - 15} y={cy - 20} width="30" height="30">
+                            <div className="w-6 h-6 border-2 border-ag-border border-t-ag-muted rounded-full animate-spin mx-auto" />
+                        </foreignObject>
+                    ) : (
+                        <text
+                            x={cx}
+                            y={cy - 10}
+                            textAnchor="middle"
+                            className="font-mono font-bold"
+                            fill={config.color}
+                            fontSize="36"
+                        >
+                            {score}
+                        </text>
+                    )}
                     <text
                         x={cx}
                         y={cx + 12}
