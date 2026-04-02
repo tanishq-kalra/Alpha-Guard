@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import DashboardHeader from "@/components/DashboardHeader";
 import TickerSearch from "@/components/TickerSearch";
 import RiskOverview, { type RiskOverviewData } from "@/components/RiskOverview";
 import MetricCard from "@/components/MetricCard";
 import MonteCarloChart from "@/components/MonteCarloChart";
+import ApiKeyBanner from "@/components/ApiKeyBanner";
 import { AnimatedSection, AnimatedList, FadeTransition } from "@/components/AnimatedSection";
 import {
   fetchFinancials,
   calculateZScore,
   fetchCompanyInfo,
   runMonteCarlo,
+  checkConfigStatus,
   type ZScoreResult,
   type MonteCarloResult,
 } from "@/lib/api";
@@ -25,6 +27,13 @@ export default function DashboardPage() {
   const [monteCarloData, setMonteCarloData] = useState<MonteCarloResult | null>(null);
   const [mcLoading, setMcLoading] = useState(false);
   const [lastRevenue, setLastRevenue] = useState<number | null>(null);
+  const [geminiMissing, setGeminiMissing] = useState(false);
+
+  useEffect(() => {
+    checkConfigStatus()
+      .then((status) => setGeminiMissing(!status.gemini_configured))
+      .catch(() => {});
+  }, []);
 
   const handleSearch = useCallback(async (ticker: string) => {
     setIsLoading(true);
@@ -107,23 +116,18 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-ag-bg flex flex-col">
       <DashboardHeader />
+      <ApiKeyBanner show={geminiMissing} />
 
       <main className="flex-1 w-full max-w-[1480px] mx-auto px-4 sm:px-6 py-8">
         {/* Hero / Search Section */}
         <AnimatedSection className="text-center mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ag-green/8 border border-ag-green/15 mb-4">
-            <div className="w-1.5 h-1.5 rounded-full bg-ag-green animate-pulse-soft" />
-            <span className="text-[11px] font-mono text-ag-green tracking-wider uppercase">
-              Forensic Analysis Engine
-            </span>
-          </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-ag-text tracking-tight mb-2">
             Credit Risk{" "}
             <span className="text-gradient-green">Intelligence</span>
           </h2>
           <p className="text-sm text-ag-text2 max-w-lg mx-auto mb-8">
             Institutional-grade financial forensics powered by Altman Z-Score
-            analysis and Monte Carlo simulation.
+            analysis, Monte Carlo simulation, and global market data.
           </p>
           <TickerSearch onSearch={handleSearch} isLoading={isLoading} />
         </AnimatedSection>
@@ -259,8 +263,8 @@ export default function DashboardPage() {
             <div className="space-y-3">
               {[
                 { name: "SEC EDGAR", status: "Connected", detail: "10-K XBRL · www.sec.gov", active: true },
-                { name: "Yahoo Finance", status: "Fallback Ready", detail: "Playwright Scraper · Secondary Source", active: false },
-                { name: "Gemini AI", status: searchedTicker ? "Active" : "Idle", detail: "Forensic Linguistic Analysis", active: !!searchedTicker },
+                { name: "Yahoo Finance", status: "Connected", detail: "yfinance · Global Markets (BSE/NSE/LSE)", active: true },
+                { name: "Gemini AI", status: geminiMissing ? "Not Configured" : (searchedTicker ? "Active" : "Idle"), detail: "Forensic Linguistic Analysis", active: !geminiMissing && !!searchedTicker },
                 { name: "Monte Carlo", status: monteCarloData ? "Active" : "Idle", detail: "GBM Revenue Simulation · 1K Paths", active: !!monteCarloData },
               ].map((source) => (
                 <div key={source.name} className="flex items-center justify-between py-2 px-3 rounded-lg bg-ag-surface/40 border border-ag-border">
@@ -285,10 +289,10 @@ export default function DashboardPage() {
       <footer className="border-t border-ag-border py-4 px-6">
         <div className="max-w-[1480px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <p className="text-[10px] font-mono text-ag-muted">
-            ALPHA-GUARD v0.2.0 · Forensic Credit Risk Platform
+            ALPHA-GUARD v0.3.0 · Forensic Credit Risk Platform
           </p>
           <p className="text-[10px] font-mono text-ag-muted">
-            Powered by FastAPI · Next.js · SEC EDGAR · Google Gemini
+            Powered by FastAPI · Next.js · SEC EDGAR · Yahoo Finance · Google Gemini
           </p>
         </div>
       </footer>

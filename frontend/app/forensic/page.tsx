@@ -6,14 +6,22 @@ import TickerSearch from "@/components/TickerSearch";
 import TruthScoreGauge from "@/components/TruthScoreGauge";
 import RiskRadar from "@/components/RiskRadar";
 import RedFlagTerminal from "@/components/RedFlagTerminal";
+import ApiKeyBanner from "@/components/ApiKeyBanner";
 import { AnimatedSection, FadeTransition } from "@/components/AnimatedSection";
-import { runForensicAudit, type ForensicAuditResponse, type RedFlag } from "@/lib/api";
+import { runForensicAudit, checkConfigStatus, type ForensicAuditResponse, type RedFlag } from "@/lib/api";
 
 export default function ForensicPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [auditResult, setAuditResult] = useState<ForensicAuditResponse | null>(null);
     const [ticker, setTicker] = useState("");
+    const [geminiMissing, setGeminiMissing] = useState(false);
+
+    useEffect(() => {
+        checkConfigStatus()
+            .then((status) => setGeminiMissing(!status.gemini_configured))
+            .catch(() => {});
+    }, []);
 
     // Dispatch flag count to StatusIndicator
     useEffect(() => {
@@ -85,16 +93,11 @@ export default function ForensicPage() {
     return (
         <div className="min-h-screen bg-ag-bg flex flex-col">
             <DashboardHeader />
+            <ApiKeyBanner show={geminiMissing} />
 
             <main className="flex-1 w-full max-w-[1480px] mx-auto px-4 sm:px-6 py-8">
                 {/* Hero / Search */}
                 <AnimatedSection className="text-center mb-10">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-ag-red/8 border border-ag-red/15 mb-4">
-                        <div className="w-1.5 h-1.5 rounded-full bg-ag-red animate-pulse" />
-                        <span className="text-[11px] font-mono text-ag-red tracking-wider uppercase">
-                            Forensic AI Engine
-                        </span>
-                    </div>
                     <h2 className="text-3xl sm:text-4xl font-bold text-ag-text tracking-tight mb-2">
                         Linguistic{" "}
                         <span className="text-gradient-green">Stress Analysis</span>
@@ -111,7 +114,7 @@ export default function ForensicPage() {
                     <AnimatedSection className="mb-6">
                         <div className="card-glass p-4" style={{ borderColor: "rgba(239,68,68,0.3)" }}>
                             <div className="flex items-center gap-3">
-                                <div className="w-2 h-2 rounded-full bg-ag-red animate-pulse" />
+                                <div className="w-2 h-2 rounded-full bg-ag-red" />
                                 <div>
                                     <p className="text-xs font-mono font-semibold text-ag-red uppercase tracking-wider">Analysis Error</p>
                                     <p className="text-sm text-ag-text2 mt-0.5">{error}</p>
@@ -155,6 +158,7 @@ export default function ForensicPage() {
                                         zone={f.truth_zone}
                                         deceptionAlert={f.deception_alert}
                                         deceptionReason={f.deception_reason ?? undefined}
+                                        aiConfidenceScore={f.ai_confidence_score}
                                     />
                                 </AnimatedSection>
 
@@ -230,8 +234,8 @@ export default function ForensicPage() {
 
             <footer className="border-t border-ag-border py-4 px-6">
                 <div className="max-w-[1480px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-                    <p className="text-[10px] font-mono text-ag-muted">ALPHA-GUARD v0.2.0 · Forensic AI Intelligence Layer</p>
-                    <p className="text-[10px] font-mono text-ag-muted">Powered by Google Gemini · FastAPI · SEC EDGAR</p>
+                    <p className="text-[10px] font-mono text-ag-muted">ALPHA-GUARD v0.3.0 · Forensic AI Intelligence Layer</p>
+                    <p className="text-[10px] font-mono text-ag-muted">Powered by Google Gemini · FastAPI · SEC EDGAR · Yahoo Finance</p>
                 </div>
             </footer>
         </div>

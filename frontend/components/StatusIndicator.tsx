@@ -61,7 +61,7 @@ export default function StatusIndicator() {
             {/* Backend status */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-ag-bg2/90 backdrop-blur-sm border border-ag-border text-[10px] font-mono">
                 <div className="relative w-2 h-2">
-                    <div className={`absolute inset-0 rounded-full ${statusColor} animate-pulse-soft`} />
+                    <div className={`absolute inset-0 rounded-full ${statusColor}`} />
                     <div className={`w-2 h-2 rounded-full ${statusColor} relative`} />
                 </div>
                 <span className="text-ag-muted">{statusText}</span>
@@ -70,7 +70,7 @@ export default function StatusIndicator() {
             {/* Flag count (only shown when > 0) */}
             {flagCount > 0 && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-ag-red/8 border border-ag-red/20 text-[10px] font-mono">
-                    <div className="w-2 h-2 rounded-full bg-ag-red animate-pulse" />
+                    <div className="w-2 h-2 rounded-full bg-ag-red" />
                     <span className="text-ag-red font-semibold">{flagCount} FLAG{flagCount !== 1 ? "S" : ""}</span>
                 </div>
             )}

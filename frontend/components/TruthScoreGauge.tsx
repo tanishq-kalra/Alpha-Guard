@@ -3,10 +3,11 @@
 import React from "react";
 
 interface TruthScoreGaugeProps {
-    score: number; // 0-100
-    zone: string;  // "Credible" | "Suspicious" | "Deceptive"
+    score: number | null; // 0-100, null = pending
+    zone: string | null;  // "Credible" | "Suspicious" | "Deceptive", null = pending
     deceptionAlert?: boolean;
     deceptionReason?: string;
+    aiConfidenceScore?: number | null; // 0-1, null = AI not run yet
 }
 
 export default function TruthScoreGauge({
@@ -14,23 +15,28 @@ export default function TruthScoreGauge({
     zone,
     deceptionAlert = false,
     deceptionReason,
+    aiConfidenceScore,
 }: TruthScoreGaugeProps) {
+    const isPending = score === null || zone === null;
+
     // SVG arc parameters
     const radius = 80;
     const cx = 100;
     const cy = 100;
     const circumference = Math.PI * radius; // Half circle
-    const fillPercent = score / 100;
+    const fillPercent = isPending ? 0 : (score ?? 0) / 100;
     const dashOffset = circumference * (1 - fillPercent);
 
     // Color based on zone
-    const zoneConfig: Record<string, { color: string; glow: string; bg: string }> = {
-        Credible: { color: "#00e67a", glow: "drop-shadow(0 0 12px rgba(0,230,122,0.4))", bg: "bg-ag-green/8" },
-        Suspicious: { color: "#f59e0b", glow: "drop-shadow(0 0 12px rgba(245,158,11,0.4))", bg: "bg-ag-amber/8" },
-        Deceptive: { color: "#ef4444", glow: "drop-shadow(0 0 12px rgba(239,68,68,0.4))", bg: "bg-ag-red/8" },
+    const zoneConfig: Record<string, { color: string; border: string }> = {
+        Credible: { color: "#22c55e", border: "border-ag-green/30" },
+        Suspicious: { color: "#f59e0b", border: "border-ag-amber/30" },
+        Deceptive: { color: "#ef4444", border: "border-ag-red/30" },
     };
 
-    const config = zoneConfig[zone] || zoneConfig.Suspicious;
+    const config = isPending
+        ? { color: "#475569", border: "border-ag-border" }
+        : zoneConfig[zone!] || zoneConfig.Suspicious;
 
     return (
         <div className="card-glass p-6 flex flex-col items-center">
@@ -47,15 +53,16 @@ export default function TruthScoreGauge({
                         CREDIBILITY INDEX
                     </p>
                 </div>
+                {aiConfidenceScore != null && (
+                    <span className="ml-auto text-[10px] font-mono text-ag-muted">
+                        AI Conf: {(aiConfidenceScore * 100).toFixed(0)}%
+                    </span>
+                )}
             </div>
 
             {/* SVG Gauge */}
             <div className="relative w-[200px] h-[120px] mb-4">
-                <svg
-                    viewBox="0 0 200 120"
-                    className="w-full h-full"
-                    style={{ filter: config.glow }}
-                >
+                <svg viewBox="0 0 200 120" className="w-full h-full">
                     {/* Background arc */}
                     <path
                         d="M 20 100 A 80 80 0 0 1 180 100"
@@ -65,36 +72,38 @@ export default function TruthScoreGauge({
                         strokeLinecap="round"
                     />
                     {/* Filled arc */}
-                    <path
-                        d="M 20 100 A 80 80 0 0 1 180 100"
-                        fill="none"
-                        stroke={config.color}
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                        strokeDasharray={circumference}
-                        strokeDashoffset={dashOffset}
-                        className="transition-all duration-1000 ease-out"
-                    />
+                    {!isPending && (
+                        <path
+                            d="M 20 100 A 80 80 0 0 1 180 100"
+                            fill="none"
+                            stroke={config.color}
+                            strokeWidth="8"
+                            strokeLinecap="round"
+                            strokeDasharray={circumference}
+                            strokeDashoffset={dashOffset}
+                            className="transition-all duration-1000 ease-out"
+                        />
+                    )}
                     {/* Score text */}
                     <text
                         x={cx}
                         y={cy - 10}
                         textAnchor="middle"
                         className="font-mono font-bold"
-                        fill={config.color}
+                        fill={isPending ? "var(--text-muted)" : config.color}
                         fontSize="36"
                     >
-                        {score}
+                        {isPending ? "—" : score}
                     </text>
                     <text
                         x={cx}
-                        y={cy + 12}
+                        y={cx + 12}
                         textAnchor="middle"
                         className="font-mono"
                         fill="var(--text-muted)"
                         fontSize="10"
                     >
-                        / 100
+                        {isPending ? "PENDING" : "/ 100"}
                     </text>
                 </svg>
             </div>
@@ -104,19 +113,20 @@ export default function TruthScoreGauge({
                 className={`
           px-4 py-1.5 rounded-full text-xs font-mono font-semibold uppercase tracking-widest
           border mb-3
-          ${zone === "Credible" ? "text-ag-green bg-ag-green/10 border-ag-green/30" : ""}
-          ${zone === "Suspicious" ? "text-ag-amber bg-ag-amber/10 border-ag-amber/30" : ""}
-          ${zone === "Deceptive" ? "text-ag-red bg-ag-red/10 border-ag-red/30" : ""}
+          ${isPending ? "text-ag-muted bg-ag-surface border-ag-border" : ""}
+          ${!isPending && zone === "Credible" ? "text-ag-green bg-ag-green/10 border-ag-green/30" : ""}
+          ${!isPending && zone === "Suspicious" ? "text-ag-amber bg-ag-amber/10 border-ag-amber/30" : ""}
+          ${!isPending && zone === "Deceptive" ? "text-ag-red bg-ag-red/10 border-ag-red/30" : ""}
         `}
             >
-                {zone}
+                {isPending ? "Pending Analysis" : zone}
             </div>
 
             {/* Zone scale */}
             <div className="flex items-center gap-1 w-full max-w-[200px] mb-4">
-                <div className="flex-1 h-1 rounded-full bg-ag-red/40" />
-                <div className="flex-1 h-1 rounded-full bg-ag-amber/40" />
-                <div className="flex-1 h-1 rounded-full bg-ag-green/40" />
+                <div className="flex-1 h-1 rounded-full bg-ag-red/30" />
+                <div className="flex-1 h-1 rounded-full bg-ag-amber/30" />
+                <div className="flex-1 h-1 rounded-full bg-ag-green/30" />
             </div>
             <div className="flex justify-between w-full max-w-[200px] text-[9px] font-mono text-ag-muted">
                 <span>Deceptive</span>
@@ -128,7 +138,7 @@ export default function TruthScoreGauge({
             {deceptionAlert && (
                 <div className="mt-4 w-full p-3 rounded-lg bg-ag-red/8 border border-ag-red/20">
                     <div className="flex items-center gap-2 mb-1">
-                        <div className="w-2 h-2 rounded-full bg-ag-red animate-pulse" />
+                        <div className="w-2 h-2 rounded-full bg-ag-red" />
                         <span className="text-xs font-mono font-semibold text-ag-red uppercase tracking-wider">
                             Deception Alert
                         </span>

@@ -106,13 +106,14 @@ class LinguisticAnalysis(BaseModel):
 
 class ForensicResult(BaseModel):
     """Complete forensic analysis output merging AI insights with financial math."""
-    truth_score: int = Field(..., ge=0, le=100, description="Overall Truth Score (0=deceptive, 100=credible)")
-    truth_zone: str = Field(..., description="Zone: Credible, Suspicious, or Deceptive")
+    truth_score: Optional[int] = Field(None, ge=0, le=100, description="Overall Truth Score (0=deceptive, 100=credible)")
+    truth_zone: Optional[str] = Field(None, description="Zone: Credible, Suspicious, or Deceptive")
     linguistic_analysis: LinguisticAnalysis
     red_flags: list[RedFlag] = Field(default_factory=list, description="All detected red flags")
     deception_alert: bool = Field(default=False, description="True if sentiment diverges from financial reality")
     deception_reason: Optional[str] = Field(None, description="Explanation for deception alert")
     z_score_result: Optional[ZScoreResult] = Field(None, description="Merged Z-Score financial analysis")
+    ai_confidence_score: Optional[float] = Field(None, ge=0, le=1, description="Gemini AI confidence score (0-1). None if AI not yet run.")
 
 
 class ForensicAuditResponse(BaseModel):
@@ -122,3 +123,4 @@ class ForensicAuditResponse(BaseModel):
     timestamp: str = Field(..., description="ISO 8601 timestamp of analysis")
     forensic: ForensicResult
     data_sources: list[str] = Field(default_factory=list, description="Data sources used")
+    gemini_active: bool = Field(default=False, description="Whether Gemini AI was used for this analysis")

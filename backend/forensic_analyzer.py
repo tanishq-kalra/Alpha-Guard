@@ -247,35 +247,7 @@ def detect_sentiment_gap(
 #  Truth Score Computation
 # ──────────────────────────────────────────────
 
-def compute_truth_score(
-    hedging_score: float,
-    evasion_score: float,
-    sentiment_gap_penalty: float,
-    num_red_flags: int,
-) -> tuple[int, str]:
-    """Compute the composite Truth Score (0-100).
-
-    Formula:
-        truth = 100 - hedging_penalty - evasion_penalty - gap_penalty - flag_penalty
-
-    Returns:
-        Tuple of (score, zone_label)
-    """
-    hedging_penalty = hedging_score * 0.25       # Max 25 points off
-    evasion_penalty = evasion_score * 0.15       # Max 15 points off
-    flag_penalty = min(20, num_red_flags * 4)    # Max 20 points off
-
-    raw_score = 100 - hedging_penalty - evasion_penalty - sentiment_gap_penalty - flag_penalty
-    score = max(0, min(100, int(round(raw_score))))
-
-    if score >= 70:
-        zone = "Credible"
-    elif score >= 40:
-        zone = "Suspicious"
-    else:
-        zone = "Deceptive"
-
-    return score, zone
+# The function compute_truth_score is now deprecated as we map directly to ai_confidence_score
 
 
 # ──────────────────────────────────────────────
@@ -334,9 +306,18 @@ async def analyze_filing_text(
         ))
 
     # 4. Compute Truth Score
-    truth_score, truth_zone = compute_truth_score(
-        hedging_score, evasion_score, gap_penalty, len(red_flags)
-    )
+    # Map directly to Gemini's ai_confidence_score per User Mission
+    if gemini_result.get("_fallback"):
+        truth_score = None
+        truth_zone = None
+    else:
+        truth_score = int(confidence * 100)
+        if truth_score >= 70:
+            truth_zone = "Credible"
+        elif truth_score >= 40:
+            truth_zone = "Suspicious"
+        else:
+            truth_zone = "Deceptive"
 
     # 5. Assemble result
     linguistic = LinguisticAnalysis(
@@ -357,6 +338,7 @@ async def analyze_filing_text(
         deception_alert=deception_alert,
         deception_reason=deception_reason,
         z_score_result=z_score_result,
+        ai_confidence_score=confidence if not gemini_result.get("_fallback") else None,
     )
 
 
@@ -376,42 +358,56 @@ async def analyze_filing_text(
 )
 async def api_forensic_audit(request: ForensicRequest) -> ForensicAuditResponse:
     """Orchestrate the complete forensic audit pipeline."""
-    from scraper import resolve_ticker_to_cik, fetch_financial_data_from_edgar, fetch_10k_text_sections
+    from scraper import resolve_ticker_to_cik, fetch_financial_data_auto, fetch_10k_text_sections, is_international_ticker
     from risk_engine import calculate_altman_z_score
 
     ticker = request.ticker.upper()
     data_sources = []
+    international = is_international_ticker(ticker)
 
     # Step 1: Resolve company info
-    try:
-        cik, company_name = await resolve_ticker_to_cik(ticker)
-    except Exception:
-        company_name = ticker
-        cik = None
+    company_name = ticker
+    if not international:
+        try:
+            cik, company_name = await resolve_ticker_to_cik(ticker)
+        except Exception:
+            company_name = ticker
+    else:
+        try:
+            import yfinance as yf
+            from scraper import normalize_ticker
+            normalized = normalize_ticker(ticker)
+            stock = yf.Ticker(normalized)
+            info = stock.info
+            company_name = info.get("longName") or info.get("shortName") or ticker
+        except Exception:
+            company_name = ticker
 
     # Step 2: Fetch financial data and compute Z-Score
     z_score_result = None
     try:
-        financial_data = await fetch_financial_data_from_edgar(ticker)
+        financial_data, source = await fetch_financial_data_auto(ticker)
         z_score_result = calculate_altman_z_score(financial_data)
-        data_sources.append("SEC EDGAR — XBRL Financial Data")
+        data_sources.append(f"{source} — Financial Data")
     except Exception as e:
-        # Z-Score is optional — forensic analysis can proceed without it
-        data_sources.append(f"SEC EDGAR — Financial data unavailable: {str(e)[:100]}")
+        data_sources.append(f"Financial data unavailable: {str(e)[:100]}")
 
-    # Step 3: Fetch 10-K text sections
+    # Step 3: Fetch 10-K text sections (US only — no SEC filings for international)
     mda_text = ""
     risk_factors_text = ""
-    try:
-        sections = await fetch_10k_text_sections(ticker)
-        mda_text = sections.get("mda", "")
-        risk_factors_text = sections.get("risk_factors", "")
-        if mda_text or risk_factors_text:
-            data_sources.append("SEC EDGAR — 10-K Filing Text")
-    except Exception as e:
-        data_sources.append(f"SEC EDGAR — Filing text unavailable: {str(e)[:100]}")
+    if not international:
+        try:
+            sections = await fetch_10k_text_sections(ticker)
+            mda_text = sections.get("mda", "")
+            risk_factors_text = sections.get("risk_factors", "")
+            if mda_text or risk_factors_text:
+                data_sources.append("SEC EDGAR — 10-K Filing Text")
+        except Exception as e:
+            data_sources.append(f"SEC EDGAR — Filing text unavailable: {str(e)[:100]}")
+    else:
+        data_sources.append("International ticker — 10-K text not available (SEC filings are US-only)")
 
-    # If no text is available, provide a meaningful error
+    # If no text is available, provide a meaningful fallback
     if not mda_text and not risk_factors_text:
         mda_text = (
             "Filing text could not be retrieved. The forensic analysis will proceed "
@@ -423,7 +419,8 @@ async def api_forensic_audit(request: ForensicRequest) -> ForensicAuditResponse:
     forensic_result = await analyze_filing_text(mda_text, risk_factors_text, z_score_result)
 
     # Step 5: Check for Gemini API
-    if os.getenv("GEMINI_API_KEY"):
+    gemini_active = bool(os.getenv("GEMINI_API_KEY"))
+    if gemini_active:
         data_sources.append("Google Gemini 2.0 Flash — AI Analysis")
     else:
         data_sources.append("Heuristic Analysis (set GEMINI_API_KEY for AI-powered insights)")
@@ -434,4 +431,5 @@ async def api_forensic_audit(request: ForensicRequest) -> ForensicAuditResponse:
         timestamp=datetime.now(timezone.utc).isoformat(),
         forensic=forensic_result,
         data_sources=data_sources,
+        gemini_active=gemini_active,
     )

@@ -6,6 +6,7 @@ Forensic Credit Risk Analysis Platform
 API Documentation: http://localhost:8000/docs
 """
 
+import os
 from dotenv import load_dotenv
 load_dotenv()  # Load .env before anything else reads os.environ
 
@@ -27,14 +28,14 @@ app = FastAPI(
         "Professional-grade forensic credit risk analysis platform.\n\n"
         "**Features:**\n"
         "- Altman Z-Score calculation with component breakdown\n"
-        "- Monte Carlo revenue simulation (placeholder)\n"
+        "- Monte Carlo revenue simulation\n"
         "- SEC EDGAR 10-K data ingestion\n"
-        "- Yahoo Finance fallback scraping\n"
+        "- Yahoo Finance global market data (BSE/NSE/international)\n"
         "- **Forensic AI Analysis** — Gemini-powered linguistic stress detection\n"
         "- Truth Score & Deception Alerts\n\n"
         "Built with FastAPI · Pandas · NumPy · Google Gemini"
     ),
-    version="0.2.0",
+    version="0.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -71,7 +72,19 @@ async def root():
     return {
         "status": "operational",
         "platform": "Alpha-Guard",
-        "version": "0.2.0",
-        "modules": ["risk_engine", "data_ingestion", "forensic_ai"],
+        "version": "0.3.0",
+        "modules": ["risk_engine", "data_ingestion", "forensic_ai", "global_markets"],
         "docs": "/docs",
+    }
+
+
+@app.get(
+    "/api/config/status",
+    tags=["System"],
+    summary="Configuration Status",
+    description="Returns the status of required API keys and configurations.",
+)
+async def config_status():
+    return {
+        "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
     }

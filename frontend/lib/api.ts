@@ -5,8 +5,7 @@
  * Backend runs on http://localhost:8000
  */
 
-const API_BASE = "https://alpha-guard-production.up.railway.app";
-console.log("API BASE:", API_BASE);
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://alpha-guard-production.up.railway.app";
 
 // ── Types matching backend Pydantic models ──
 
@@ -70,6 +69,7 @@ export interface ForensicResult {
     deception_alert: boolean;
     deception_reason: string | null;
     z_score_result: ZScoreResult | null;
+    ai_confidence_score: number | null;
 }
 
 export interface ForensicAuditResponse {
@@ -78,6 +78,7 @@ export interface ForensicAuditResponse {
     timestamp: string;
     forensic: ForensicResult;
     data_sources: string[];
+    gemini_active: boolean;
 }
 
 export interface HealthCheck {
@@ -181,4 +182,14 @@ export async function runMonteCarlo(params: MonteCarloInput): Promise<MonteCarlo
         method: "POST",
         body: JSON.stringify(params),
     });
+}
+
+// ── Config Status ──
+
+export interface ConfigStatus {
+    gemini_configured: boolean;
+}
+
+export async function checkConfigStatus(): Promise<ConfigStatus> {
+    return apiFetch<ConfigStatus>("/api/config/status");
 }

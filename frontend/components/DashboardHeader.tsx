@@ -15,17 +15,16 @@ export default function DashboardHeader() {
     const pathname = usePathname();
 
     return (
-        <header className="w-full border-b border-ag-border bg-ag-bg2/80 backdrop-blur-md sticky top-0 z-50">
-            <div className="max-w-[1480px] mx-auto px-6 h-16 flex items-center justify-between">
+        <header className="w-full border-b border-ag-border bg-ag-bg2 sticky top-0 z-50">
+            <div className="max-w-[1480px] mx-auto px-6 h-14 flex items-center justify-between">
                 {/* Logo / Wordmark */}
                 <Link href="/" className="flex items-center gap-3 group">
-                    {/* Shield icon */}
-                    <div className="relative w-9 h-9 flex items-center justify-center">
-                        <div className="absolute inset-0 rounded-lg bg-ag-green/10 border border-ag-green/20 group-hover:bg-ag-green/15 transition-colors" />
+                    <div className="relative w-8 h-8 flex items-center justify-center">
+                        <div className="absolute inset-0 rounded-md bg-ag-green/10 border border-ag-green/20 group-hover:border-ag-green/40 transition-colors" />
                         <svg
                             viewBox="0 0 24 24"
                             fill="none"
-                            className="w-5 h-5 text-ag-green relative z-10"
+                            className="w-4 h-4 text-ag-green relative z-10"
                             stroke="currentColor"
                             strokeWidth={1.8}
                             strokeLinecap="round"
@@ -36,18 +35,18 @@ export default function DashboardHeader() {
                         </svg>
                     </div>
                     <div>
-                        <h1 className="text-base font-semibold tracking-tight text-ag-text leading-none">
+                        <h1 className="text-sm font-semibold tracking-tight text-ag-text leading-none">
                             Alpha-Guard
                         </h1>
-                        <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-ag-muted mt-0.5">
+                        <p className="text-[9px] font-mono uppercase tracking-[0.2em] text-ag-muted mt-0.5">
                             Forensic Risk Platform
                         </p>
                     </div>
                 </Link>
 
                 {/* Nav / Status */}
-                <div className="flex items-center gap-6">
-                    <nav className="hidden md:flex items-center gap-1">
+                <div className="flex items-center gap-4">
+                    <nav className="hidden md:flex items-center gap-0.5">
                         {NAV_ITEMS.map((item) => {
                             const isActive =
                                 item.href === "/"
@@ -59,7 +58,7 @@ export default function DashboardHeader() {
                                     key={item.label}
                                     href={item.href}
                                     className={`
-                    px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+                    px-3 py-1.5 rounded-md text-xs font-medium transition-colors
                     ${isActive
                                             ? "text-ag-green bg-ag-green/8"
                                             : "text-ag-text2 hover:text-ag-text hover:bg-ag-surface/50"
@@ -73,13 +72,10 @@ export default function DashboardHeader() {
                     </nav>
 
                     {/* Live Status */}
-                    <div className="flex items-center gap-2 pl-4 border-l border-ag-border">
-                        <div className="relative flex items-center justify-center w-2 h-2">
-                            <div className="absolute w-2 h-2 rounded-full bg-ag-green animate-pulse-soft" />
-                            <div className="w-1.5 h-1.5 rounded-full bg-ag-green relative z-10" />
-                        </div>
-                        <span className="text-xs font-mono text-ag-muted hidden sm:inline">
-                            OPERATIONAL
+                    <div className="flex items-center gap-2 pl-3 border-l border-ag-border">
+                        <div className="w-1.5 h-1.5 rounded-full bg-ag-green" />
+                        <span className="text-[10px] font-mono text-ag-muted hidden sm:inline">
+                            LIVE
                         </span>
                     </div>
                 </div>

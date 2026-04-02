@@ -81,10 +81,7 @@ export default function RedFlagTerminal({ flags = MOCK_FLAGS }: RedFlagTerminalP
                         <div className="w-3 h-3 rounded-full bg-ag-green/60" />
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="relative w-2 h-2">
-                            <div className="absolute inset-0 rounded-full bg-ag-red animate-pulse" />
-                            <div className="w-2 h-2 rounded-full bg-ag-red relative" />
-                        </div>
+                        <div className="w-2 h-2 rounded-full bg-ag-red" />
                         <span className="text-xs font-mono font-semibold text-ag-red uppercase tracking-widest">
                             Live Analysis
                         </span>
@@ -152,7 +149,7 @@ export default function RedFlagTerminal({ flags = MOCK_FLAGS }: RedFlagTerminalP
                 <div className="flex items-center gap-2 py-2">
                     <span className="text-ag-green text-xs">▶</span>
                     <span className="text-xs text-ag-muted">Analysis complete. Awaiting next query...</span>
-                    <span className="w-2 h-4 bg-ag-green/60 animate-pulse" />
+                    <span className="w-2 h-4 bg-ag-green/60" />
                 </div>
             </div>
         </div>

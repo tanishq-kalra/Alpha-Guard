@@ -12,6 +12,7 @@ interface TickerEntry {
     symbol: string;
     name: string;
     sector: string;
+    exchange?: string;
 }
 
 export default function TickerSearch({ onSearch, isLoading: externalLoading }: TickerSearchProps) {
@@ -20,32 +21,38 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
     const [internalLoading, setInternalLoading] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(-1);
+    const [globalMode, setGlobalMode] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
     const isLoading = externalLoading ?? internalLoading;
 
-    // Filter tickers based on query — match symbol OR company name
+    const allTickers = tickers as TickerEntry[];
+
+    // Filter tickers based on query and global mode
     const suggestions = useMemo((): TickerEntry[] => {
         if (!query.trim()) return [];
         const q = query.toLowerCase();
-        return (tickers as TickerEntry[])
-            .filter(
-                (t) =>
+        return allTickers
+            .filter((t) => {
+                // Filter by exchange when not in global mode
+                if (!globalMode && t.exchange && !["NYSE", "NASDAQ", "S&P500"].includes(t.exchange)) {
+                    return false;
+                }
+                return (
                     t.symbol.toLowerCase().includes(q) ||
                     t.name.toLowerCase().includes(q)
-            )
-            .slice(0, 8); // Show top 8 results
-    }, [query]);
+                );
+            })
+            .slice(0, 8);
+    }, [query, globalMode, allTickers]);
 
-    // Show dropdown when there are suggestions and input is focused
     useEffect(() => {
         setShowDropdown(isFocused && suggestions.length > 0 && !isLoading);
         setSelectedIndex(-1);
     }, [suggestions, isFocused, isLoading]);
 
-    // Close dropdown on outside click
     useEffect(() => {
         const handleClick = (e: MouseEvent) => {
             if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -56,7 +63,6 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
         return () => document.removeEventListener("mousedown", handleClick);
     }, []);
 
-    // Ctrl+K shortcut to focus the search
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === "k") {
@@ -98,7 +104,6 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
             const ticker = query.trim().toUpperCase();
             if (!ticker) return;
 
-            // If a dropdown item is highlighted, use it
             if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
                 handleSelect(suggestions[selectedIndex]);
                 return;
@@ -130,7 +135,6 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
         [showDropdown, suggestions.length]
     );
 
-    // Scroll selected item into view
     useEffect(() => {
         if (selectedIndex >= 0 && dropdownRef.current) {
             const items = dropdownRef.current.querySelectorAll("[data-ticker-item]");
@@ -138,7 +142,6 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
         }
     }, [selectedIndex]);
 
-    // Sector color mapping
     const sectorColor = (sector: string) => {
         const map: Record<string, string> = {
             Technology: "text-ag-cyan",
@@ -155,15 +158,18 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
         return map[sector] || "text-ag-muted";
     };
 
+    const usCount = allTickers.filter(t => !t.exchange || ["NYSE", "NASDAQ", "S&P500"].includes(t.exchange)).length;
+    const globalCount = allTickers.length;
+
     return (
         <form onSubmit={handleSubmit} className="w-full max-w-2xl mx-auto">
             <div ref={containerRef} className="relative">
                 <div
                     className={`
             relative flex items-center gap-3 px-4 py-3
-            rounded-xl border transition-all duration-300
+            rounded-lg border transition-all duration-200
             ${isFocused
-                            ? "border-ag-green/40 bg-ag-card shadow-[0_0_30px_rgba(0,230,122,0.06)]"
+                            ? "border-ag-green/40 bg-ag-card"
                             : "border-ag-border bg-ag-bg2 hover:border-ag-border-hover"
                         }
             ${showDropdown ? "rounded-b-none border-b-ag-border/50" : ""}
@@ -171,7 +177,7 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
                 >
                     {/* Search Icon */}
                     <svg
-                        className={`w-5 h-5 flex-shrink-0 transition-colors duration-200 ${isFocused ? "text-ag-green" : "text-ag-muted"}`}
+                        className={`w-4 h-4 flex-shrink-0 transition-colors duration-200 ${isFocused ? "text-ag-green" : "text-ag-muted"}`}
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -192,11 +198,13 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
                         onChange={(e) => setQuery(e.target.value.toUpperCase())}
                         onFocus={() => setIsFocused(true)}
                         onBlur={() => {
-                            // Delay blur to allow dropdown click
                             setTimeout(() => setIsFocused(false), 150);
                         }}
                         onKeyDown={handleKeyDown}
-                        placeholder="Search ticker or company... e.g. AAPL, Apple"
+                        placeholder={globalMode
+                            ? "Search global markets... e.g. RELIANCE, TCS.NS, TSLA"
+                            : "Search ticker or company... e.g. AAPL, Apple"
+                        }
                         className="
               flex-1 bg-transparent outline-none text-ag-text text-sm
               font-mono placeholder:text-ag-muted tracking-wide
@@ -209,6 +217,27 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
                         aria-autocomplete="list"
                         aria-controls="ticker-listbox"
                     />
+
+                    {/* Global Toggle */}
+                    <button
+                        type="button"
+                        onClick={() => setGlobalMode(!globalMode)}
+                        className={`
+              flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono font-semibold
+              uppercase tracking-wider border transition-all duration-200
+              ${globalMode
+                                ? "text-ag-cyan bg-ag-cyan/10 border-ag-cyan/30"
+                                : "text-ag-muted bg-ag-surface border-ag-border hover:text-ag-text2"
+                            }
+            `}
+                    >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M2 12h20" />
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                        </svg>
+                        Global
+                    </button>
 
                     {/* Loading Spinner */}
                     {isLoading && (
@@ -233,7 +262,7 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
                             type="submit"
                             disabled={isLoading}
                             className="
-                px-4 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider
+                px-4 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider
                 bg-ag-green/10 text-ag-green border border-ag-green/20
                 hover:bg-ag-green/20 hover:border-ag-green/40
                 transition-all duration-200
@@ -253,9 +282,9 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
                         role="listbox"
                         className="
               absolute z-50 w-full
-              rounded-b-xl border border-t-0 border-ag-green/40
-              bg-ag-card/95 backdrop-blur-xl
-              shadow-[0_12px_40px_rgba(0,0,0,0.5)]
+              rounded-b-lg border border-t-0 border-ag-border
+              bg-ag-card
+              shadow-lg shadow-black/20
               overflow-hidden
             "
                     >
@@ -271,23 +300,30 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
                   flex items-center justify-between px-4 py-2.5 cursor-pointer
                   transition-colors duration-100
                   ${i === selectedIndex
-                                        ? "bg-ag-green/10 border-l-2 border-l-ag-green"
-                                        : "border-l-2 border-l-transparent hover:bg-ag-surface/60"
+                                        ? "bg-ag-green/8 border-l-2 border-l-ag-green"
+                                        : "border-l-2 border-l-transparent hover:bg-ag-surface/40"
                                     }
                   ${i < suggestions.length - 1 ? "border-b border-b-ag-border/40" : ""}
                 `}
                             >
                                 <div className="flex items-center gap-3 min-w-0">
-                                    <span className={`text-sm font-mono font-bold ${i === selectedIndex ? "text-ag-green" : "text-ag-text"} w-[60px] flex-shrink-0`}>
+                                    <span className={`text-sm font-mono font-bold ${i === selectedIndex ? "text-ag-green" : "text-ag-text"} w-[80px] flex-shrink-0`}>
                                         {entry.symbol}
                                     </span>
                                     <span className="text-xs text-ag-text2 truncate">
                                         {entry.name}
                                     </span>
                                 </div>
-                                <span className={`text-[9px] font-mono uppercase tracking-wider flex-shrink-0 ml-2 ${sectorColor(entry.sector)}`}>
-                                    {entry.sector}
-                                </span>
+                                <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                                    {entry.exchange && (
+                                        <span className="text-[8px] font-mono uppercase tracking-wider text-ag-muted bg-ag-surface px-1.5 py-0.5 rounded">
+                                            {entry.exchange}
+                                        </span>
+                                    )}
+                                    <span className={`text-[9px] font-mono uppercase tracking-wider ${sectorColor(entry.sector)}`}>
+                                        {entry.sector}
+                                    </span>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -295,8 +331,11 @@ export default function TickerSearch({ onSearch, isLoading: externalLoading }: T
             </div>
 
             {/* Helper text */}
-            <p className="text-center text-[11px] text-ag-muted mt-2 font-mono">
-                Real-time global market access enabled · {(tickers as TickerEntry[]).length} companies indexed
+            <p className="text-center text-[10px] text-ag-muted mt-2 font-mono">
+                {globalMode
+                    ? `Global search · ${globalCount} companies across BSE/NSE, NYSE, LSE & more`
+                    : `US market · ${usCount} companies indexed · Enable Global for international`
+                }
             </p>
         </form>
     );

@@ -3,7 +3,7 @@ Alpha-Guard — Financial Data Ingestion
 =======================================
 Data sources:
   1. SEC EDGAR (primary) — Free JSON API at data.sec.gov for 10-K XBRL data
-  2. Yahoo Finance (secondary/fallback) — Playwright-based web scraping
+  2. Yahoo Finance (yfinance) — Lightweight API for global market data (BSE/NSE/international)
 """
 
 import re
@@ -50,20 +50,76 @@ XBRL_CONCEPT_MAP = {
     ],
 }
 
+# ──────────────────────────────────────────────
+#  Indian / International Ticker Detection
+# ──────────────────────────────────────────────
+
+# Well-known Indian company tickers (without suffix)
+INDIAN_TICKERS = {
+    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "HINDUNILVR",
+    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "AXISBANK",
+    "BAJFINANCE", "MARUTI", "HCLTECH", "WIPRO", "ASIANPAINT",
+    "SUNPHARMA", "TATAMOTORS", "TATASTEEL", "NTPC", "POWERGRID",
+    "ULTRACEMCO", "NESTLEIND", "TITAN", "ADANIENT", "ADANIPORTS",
+    "TECHM", "ONGC", "COALINDIA", "JSWSTEEL", "BAJAJFINSV",
+    "DIVISLAB", "DRREDDY", "CIPLA", "BRITANNIA", "GRASIM",
+    "HDFCLIFE", "SBILIFE", "INDUSINDBK", "HEROMOTOCO", "EICHERMOT",
+    "APOLLOHOSP", "TATACONSUM", "BPCL", "HINDALCO",
+}
+
+# Known international exchange suffixes
+EXCHANGE_SUFFIXES = {
+    ".NS": "NSE (India)",
+    ".BO": "BSE (India)",
+    ".L": "LSE (London)",
+    ".T": "TSE (Tokyo)",
+    ".HK": "HKEX (Hong Kong)",
+    ".DE": "XETRA (Germany)",
+    ".PA": "Euronext Paris",
+    ".AS": "Euronext Amsterdam",
+    ".TO": "TSX (Toronto)",
+    ".AX": "ASX (Australia)",
+    ".SS": "SSE (Shanghai)",
+    ".SZ": "SZSE (Shenzhen)",
+    ".KS": "KRX (Korea)",
+    ".SI": "SGX (Singapore)",
+}
+
+
+def is_international_ticker(ticker: str) -> bool:
+    """Check if a ticker is for an international (non-US) market."""
+    upper = ticker.upper()
+    for suffix in EXCHANGE_SUFFIXES:
+        if upper.endswith(suffix.upper()):
+            return True
+    if upper in INDIAN_TICKERS:
+        return True
+    return False
+
+
+def normalize_ticker(ticker: str) -> str:
+    """Auto-append exchange suffix for known markets.
+
+    Rules:
+        - Known Indian tickers without suffix -> append .NS (NSE is primary)
+        - Already has a suffix -> keep as-is
+        - Unknown -> keep as-is (assume US)
+    """
+    upper = ticker.upper()
+    for suffix in EXCHANGE_SUFFIXES:
+        if upper.endswith(suffix.upper()):
+            return ticker
+    if upper in INDIAN_TICKERS:
+        return f"{upper}.NS"
+    return ticker
+
+
+# ──────────────────────────────────────────────
+#  SEC EDGAR (US Companies)
+# ──────────────────────────────────────────────
 
 async def resolve_ticker_to_cik(ticker: str) -> tuple[str, str]:
-    """Resolve a stock ticker to its SEC CIK number and company name.
-
-    Uses the SEC's company_tickers.json endpoint which maps all tickers
-    to their CIK identifiers.
-
-    Returns:
-        Tuple of (cik_padded_to_10_digits, company_name)
-
-    Raises:
-        HTTPException: If the ticker is not found or SEC is unreachable.
-    """
-    # NOTE: The tickers JSON lives on www.sec.gov, NOT data.sec.gov
+    """Resolve a stock ticker to its SEC CIK number and company name."""
     url = "https://www.sec.gov/files/company_tickers.json"
     try:
         async with httpx.AsyncClient() as client:
@@ -100,12 +156,7 @@ async def resolve_ticker_to_cik(ticker: str) -> tuple[str, str]:
 
 
 async def get_company_facts(cik: str) -> dict:
-    """Fetch all XBRL company facts from SEC EDGAR.
-
-    Endpoint: /api/xbrl/companyfacts/CIK{cik}.json
-
-    Returns the full JSON payload containing all reported financial concepts.
-    """
+    """Fetch all XBRL company facts from SEC EDGAR."""
     url = f"{SEC_EDGAR_BASE}/api/xbrl/companyfacts/CIK{cik}.json"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, headers=SEC_HEADERS, timeout=30.0)
@@ -114,18 +165,7 @@ async def get_company_facts(cik: str) -> dict:
 
 
 def extract_latest_annual_value(facts: dict, concept_tags: list[str]) -> float | None:
-    """Extract the most recent 10-K annual value for a given financial concept.
-
-    Searches through the us-gaap taxonomy for matching concept tags.
-    Filters for 10-K filings (form = '10-K') and returns the latest value.
-
-    Args:
-        facts: The 'facts' object from the companyfacts API response.
-        concept_tags: List of XBRL concept names to search (in priority order).
-
-    Returns:
-        The numeric value, or None if not found.
-    """
+    """Extract the most recent 10-K annual value for a given financial concept."""
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
 
     for tag in concept_tags:
@@ -134,10 +174,8 @@ def extract_latest_annual_value(facts: dict, concept_tags: list[str]) -> float |
             continue
 
         units = concept.get("units", {})
-        # Financial values are typically in USD
         values = units.get("USD", [])
 
-        # Filter for 10-K filings only
         annual_values = [
             v for v in values
             if v.get("form") == "10-K" and v.get("val") is not None
@@ -146,7 +184,6 @@ def extract_latest_annual_value(facts: dict, concept_tags: list[str]) -> float |
         if not annual_values:
             continue
 
-        # Sort by filing date (descending) and take the latest
         annual_values.sort(key=lambda x: x.get("end", ""), reverse=True)
         return float(annual_values[0]["val"])
 
@@ -154,17 +191,7 @@ def extract_latest_annual_value(facts: dict, concept_tags: list[str]) -> float |
 
 
 async def fetch_financial_data_from_edgar(ticker: str) -> FinancialData:
-    """Fetch and assemble financial data from SEC EDGAR for Z-Score calculation.
-
-    Pipeline:
-        1. Resolve ticker → CIK
-        2. Fetch all company facts (XBRL)
-        3. Extract each required metric from the latest 10-K filing
-        4. Return assembled FinancialData
-
-    Note: market_cap is not available from SEC filings — a default placeholder
-    is used. In production, this would be supplemented by a market data API.
-    """
+    """Fetch and assemble financial data from SEC EDGAR for Z-Score calculation."""
     cik, company_name = await resolve_ticker_to_cik(ticker)
     facts = await get_company_facts(cik)
 
@@ -185,9 +212,8 @@ async def fetch_financial_data_from_edgar(ticker: str) -> FinancialData:
                    f"{', '.join(missing_fields)}. Manual input may be required.",
         )
 
-    # Market cap placeholder — in production, source from a market data provider
     if "market_cap" not in extracted:
-        extracted["market_cap"] = extracted.get("total_assets", 1_000_000)  # Rough proxy
+        extracted["market_cap"] = extracted.get("total_assets", 1_000_000)
 
     return FinancialData(ticker=ticker.upper(), **extracted)
 
@@ -205,11 +231,7 @@ def _strip_html_tags(html_text: str) -> str:
 
 
 def _extract_section(text: str, start_pattern: str, end_pattern: str) -> str:
-    """Extract a section from 10-K text between two Item markers.
-
-    Uses case-insensitive regex to find section boundaries.
-    Returns the text between the markers, truncated to ~15000 chars for API limits.
-    """
+    """Extract a section from 10-K text between two Item markers."""
     pattern = re.compile(
         rf'{start_pattern}(.*?){end_pattern}',
         re.IGNORECASE | re.DOTALL
@@ -222,30 +244,15 @@ def _extract_section(text: str, start_pattern: str, end_pattern: str) -> str:
 
 
 async def fetch_10k_text_sections(ticker: str) -> dict[str, str]:
-    """Fetch and extract key text sections from the latest 10-K filing.
-
-    Pipeline:
-        1. Resolve ticker → CIK
-        2. Query SEC EDGAR filing index for latest 10-K
-        3. Fetch the primary document HTML
-        4. Extract Item 1A (Risk Factors) and Item 7 (MD&A)
-
-    Returns:
-        Dict with keys 'risk_factors' and 'mda', each containing extracted text.
-    """
+    """Fetch and extract key text sections from the latest 10-K filing."""
     cik, _ = await resolve_ticker_to_cik(ticker)
 
-    # Query EDGAR submissions API for recent filings
-    submissions_url = f"{SEC_EDGAR_BASE}/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K&dateb=&owner=include&count=5&search_text=&action=getcompany&output=atom"
-
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        # Try the submissions JSON endpoint first
         sub_url = f"{SEC_EDGAR_BASE}/submissions/CIK{cik}.json"
         resp = await client.get(sub_url, headers=SEC_HEADERS, timeout=20.0)
         resp.raise_for_status()
         submissions = resp.json()
 
-        # Find latest 10-K in recent filings
         recent = submissions.get("filings", {}).get("recent", {})
         forms = recent.get("form", [])
         accession_numbers = recent.get("accessionNumber", [])
@@ -262,23 +269,18 @@ async def fetch_10k_text_sections(ticker: str) -> dict[str, str]:
         if not filing_url:
             return {"risk_factors": "", "mda": "", "error": "No 10-K filing found"}
 
-        # Fetch the full filing document
         doc_resp = await client.get(filing_url, headers=SEC_HEADERS, timeout=30.0)
         doc_resp.raise_for_status()
         raw_html = doc_resp.text
 
-    # Strip HTML to get plain text
     plain_text = _strip_html_tags(raw_html)
 
-    # Extract sections using Item markers
-    # Item 1A: Risk Factors → ends at Item 1B or Item 2
     risk_factors = _extract_section(
         plain_text,
         r'item\s*1a[\.\:\s]*risk\s*factors',
         r'item\s*(?:1b|2)[\.\:\s]'
     )
 
-    # Item 7: MD&A → ends at Item 7A or Item 8
     mda = _extract_section(
         plain_text,
         r'item\s*7[\.\:\s]*management[\'\u2019]?s?\s*discussion',
@@ -292,97 +294,114 @@ async def fetch_10k_text_sections(ticker: str) -> dict[str, str]:
 
 
 # ──────────────────────────────────────────────
-#  Yahoo Finance Scraper (Playwright-based)
+#  Yahoo Finance via yfinance (Global Markets)
 # ──────────────────────────────────────────────
 
-async def scrape_yahoo_finance(ticker: str) -> dict:
-    """Scrape financial data from Yahoo Finance using Playwright.
+def fetch_financial_data_yahoo(ticker: str) -> FinancialData:
+    """Fetch financial data from Yahoo Finance using yfinance.
 
-    Target pages:
-        - https://finance.yahoo.com/quote/{ticker}/financials/
-        - https://finance.yahoo.com/quote/{ticker}/balance-sheet/
-
-    Key HTML structure (identified via browser inspection):
-        - Financial tables use <div class="tableBody"> containers
-        - Row labels are in <div class="rowTitle"> elements
-        - Values are in <div class="column"> elements
-        - Period headers (Annual/Quarterly) toggle data views
-
-    This is a SECONDARY data source — used when SEC EDGAR data is
-    incomplete or when market-cap data is needed.
-
-    Returns:
-        Dict with extracted financial metrics, or empty dict if scraping fails.
-
-    Note:
-        This function requires Playwright to be installed and configured.
-        Run `playwright install chromium` before first use.
+    Supports global tickers including BSE/NSE (.NS/.BO suffixes),
+    LSE (.L), TSE (.T), and all major world exchanges.
     """
-    # Playwright integration is designed for use with the browser agent.
-    # Direct programmatic scraping structure:
     try:
-        from playwright.async_api import async_playwright
+        import yfinance as yf
     except ImportError:
-        return {"error": "Playwright not installed. Run: pip install playwright && playwright install chromium"}
+        raise HTTPException(
+            status_code=500,
+            detail="yfinance not installed. Run: pip install yfinance",
+        )
 
-    result = {}
+    normalized = normalize_ticker(ticker)
+
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        stock = yf.Ticker(normalized)
+        info = stock.info
+        bs = stock.balance_sheet
+        financials = stock.financials
+
+        if bs is None or bs.empty:
+            raise HTTPException(
+                status_code=422,
+                detail=f"No balance sheet data available for '{normalized}' on Yahoo Finance.",
             )
-            page = await context.new_page()
 
-            # --- Income Statement ---
-            await page.goto(
-                f"https://finance.yahoo.com/quote/{ticker}/financials/",
-                wait_until="domcontentloaded",
-                timeout=20000,
+        latest_bs = bs.iloc[:, 0] if not bs.empty else {}
+        latest_fin = financials.iloc[:, 0] if financials is not None and not financials.empty else {}
+
+        def safe_get(series, keys, default=None):
+            """Try multiple key names against a pandas Series."""
+            if hasattr(series, 'get'):
+                for key in keys:
+                    val = series.get(key)
+                    if val is not None and str(val) != 'nan':
+                        return float(val)
+            return default
+
+        total_assets = safe_get(latest_bs, ["Total Assets", "TotalAssets"])
+        current_assets = safe_get(latest_bs, ["Current Assets", "CurrentAssets"])
+        current_liabilities = safe_get(latest_bs, ["Current Liabilities", "CurrentLiabilities"])
+        retained_earnings = safe_get(latest_bs, ["Retained Earnings", "RetainedEarnings"])
+        total_liabilities = safe_get(latest_bs, ["Total Liabilities Net Minority Interest", "Total Liab", "TotalLiabilitiesNetMinorityInterest"])
+        ebit = safe_get(latest_fin, ["EBIT", "Operating Income", "OperatingIncome"])
+        revenue = safe_get(latest_fin, ["Total Revenue", "TotalRevenue", "Revenue"])
+        market_cap = info.get("marketCap")
+
+        missing = []
+        if total_assets is None: missing.append("total_assets")
+        if current_assets is None: missing.append("current_assets")
+        if current_liabilities is None: missing.append("current_liabilities")
+        if total_liabilities is None: missing.append("total_liabilities")
+        if revenue is None: missing.append("revenue")
+
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not extract from Yahoo Finance for '{normalized}': {', '.join(missing)}.",
             )
-            await page.wait_for_timeout(3000)  # Allow dynamic content to load
 
-            # Extract revenue from the financials table
-            revenue_rows = await page.query_selector_all('[data-test="fin-row"]')
-            for row in revenue_rows:
-                title_el = await row.query_selector('[data-test="fin-col-0"]')
-                if title_el:
-                    title = await title_el.inner_text()
-                    if "Total Revenue" in title:
-                        value_el = await row.query_selector('[data-test="fin-col-1"]')
-                        if value_el:
-                            val_text = await value_el.inner_text()
-                            result["revenue"] = val_text
+        if retained_earnings is None:
+            retained_earnings = 0.0
+        if ebit is None:
+            ebit = 0.0
+        if market_cap is None:
+            market_cap = total_assets
 
-            # --- Balance Sheet ---
-            await page.goto(
-                f"https://finance.yahoo.com/quote/{ticker}/balance-sheet/",
-                wait_until="domcontentloaded",
-                timeout=20000,
-            )
-            await page.wait_for_timeout(3000)
+        return FinancialData(
+            ticker=normalized.upper(),
+            total_assets=total_assets,
+            current_assets=current_assets,
+            current_liabilities=current_liabilities,
+            retained_earnings=retained_earnings,
+            ebit=ebit,
+            market_cap=float(market_cap),
+            total_liabilities=total_liabilities,
+            revenue=revenue,
+        )
 
-            balance_rows = await page.query_selector_all('[data-test="fin-row"]')
-            for row in balance_rows:
-                title_el = await row.query_selector('[data-test="fin-col-0"]')
-                if title_el:
-                    title = await title_el.inner_text()
-                    value_el = await row.query_selector('[data-test="fin-col-1"]')
-                    if value_el:
-                        val_text = await value_el.inner_text()
-                        if "Total Assets" in title:
-                            result["total_assets"] = val_text
-                        elif "Total Liabilities" in title:
-                            result["total_liabilities"] = val_text
-                        elif "Retained Earnings" in title:
-                            result["retained_earnings"] = val_text
-
-            await browser.close()
-
+    except HTTPException:
+        raise
     except Exception as e:
-        result["error"] = f"Yahoo Finance scraping failed: {str(e)}"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Yahoo Finance data fetch failed for '{normalized}': {str(e)[:300]}",
+        )
 
-    return result
+
+async def fetch_financial_data_auto(ticker: str) -> tuple[FinancialData, str]:
+    """Smart routing: fetch from SEC EDGAR (US) or Yahoo Finance (international)."""
+    if is_international_ticker(ticker):
+        data = fetch_financial_data_yahoo(ticker)
+        return data, "Yahoo Finance"
+    else:
+        try:
+            data = await fetch_financial_data_from_edgar(ticker)
+            return data, "SEC EDGAR"
+        except HTTPException:
+            try:
+                data = fetch_financial_data_yahoo(ticker)
+                return data, "Yahoo Finance (fallback)"
+            except HTTPException:
+                raise
 
 
 # ──────────────────────────────────────────────
@@ -393,29 +412,48 @@ async def scrape_yahoo_finance(ticker: str) -> dict:
     "/company/{ticker}",
     response_model=CompanyInfo,
     summary="Get Company Info",
-    description="Resolve a stock ticker to company information via SEC EDGAR.",
+    description="Resolve a stock ticker to company information.",
 )
 async def api_company_info(ticker: str) -> CompanyInfo:
-    cik, name = await resolve_ticker_to_cik(ticker)
-    return CompanyInfo(ticker=ticker.upper(), name=name, cik=cik)
+    if is_international_ticker(ticker):
+        try:
+            import yfinance as yf
+            normalized = normalize_ticker(ticker)
+            stock = yf.Ticker(normalized)
+            info = stock.info
+            name = info.get("longName") or info.get("shortName") or normalized
+            return CompanyInfo(
+                ticker=normalized.upper(),
+                name=name,
+                cik=None,
+                sector=info.get("sector"),
+            )
+        except Exception:
+            return CompanyInfo(ticker=ticker.upper(), name=ticker.upper())
+    else:
+        cik, name = await resolve_ticker_to_cik(ticker)
+        return CompanyInfo(ticker=ticker.upper(), name=name, cik=cik)
 
 
 @router.get(
     "/financials/{ticker}",
     response_model=FinancialData,
-    summary="Fetch Financial Data",
-    description="Fetch the latest 10-K financial data for a company from SEC EDGAR. "
-                "Returns all metrics needed for Altman Z-Score calculation.",
+    summary="Fetch Financial Data (Auto-Routed)",
+    description="Fetch the latest financial data for a company. "
+                "Automatically routes US tickers to SEC EDGAR and international tickers "
+                "(BSE/NSE/LSE etc.) to Yahoo Finance.",
 )
 async def api_financials(ticker: str) -> FinancialData:
-    return await fetch_financial_data_from_edgar(ticker)
+    data, _ = await fetch_financial_data_auto(ticker)
+    return data
 
 
 @router.get(
-    "/yahoo/{ticker}",
-    summary="Scrape Yahoo Finance (Fallback)",
-    description="Scrape financial data from Yahoo Finance using Playwright. "
-                "Use as a fallback when SEC EDGAR data is incomplete.",
+    "/financials-global/{ticker}",
+    response_model=FinancialData,
+    summary="Fetch Global Financial Data (Yahoo Finance)",
+    description="Fetch financial data from Yahoo Finance. "
+                "Supports all major world exchanges including BSE (.BO) and NSE (.NS).",
 )
-async def api_yahoo_scrape(ticker: str) -> dict:
-    return await scrape_yahoo_finance(ticker)
+async def api_financials_global(ticker: str) -> FinancialData:
+    return fetch_financial_data_yahoo(ticker)
