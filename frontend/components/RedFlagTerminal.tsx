@@ -13,28 +13,6 @@ interface RedFlagTerminalProps {
     flags?: RedFlagEntry[];
 }
 
-const TypewriterText = ({ text, delay = 0 }: { text: string; delay?: number }) => {
-    const [displayed, setDisplayed] = React.useState("");
-
-    React.useEffect(() => {
-        let i = 0;
-        let timer: NodeJS.Timeout;
-        const start = setTimeout(() => {
-            timer = setInterval(() => {
-                setDisplayed(text.substring(0, i));
-                i++;
-                if (i > text.length) clearInterval(timer);
-            }, 10);
-        }, delay);
-        return () => {
-            clearTimeout(start);
-            clearInterval(timer);
-        };
-    }, [text, delay]);
-
-    return <span>{displayed}</span>;
-};
-
 const MOCK_FLAGS: RedFlagEntry[] = [
     {
         sentence:
@@ -66,7 +44,7 @@ const MOCK_FLAGS: RedFlagEntry[] = [
         category: "hedging",
         severity: 5,
         explanation:
-            "Standard safe-harbor language, but the density of such disclaimers in this filing exceeds industry norms by 2.3x, suggesting intentional obfuscation.",
+            "Standard safe-harbor language, but the density of such disclaimers in this filing exceeds industry norms by 2.3×, suggesting intentional obfuscation.",
     },
     {
         sentence:
@@ -79,9 +57,24 @@ const MOCK_FLAGS: RedFlagEntry[] = [
 ];
 
 const severityConfig = (severity: number) => {
-    if (severity >= 8) return { label: "CRITICAL", color: "text-ag-red", bg: "bg-ag-red/10", border: "border-ag-red/30", dot: "bg-ag-red" };
-    if (severity >= 5) return { label: "WARNING", color: "text-ag-amber", bg: "bg-ag-amber/10", border: "border-ag-amber/30", dot: "bg-ag-amber" };
-    return { label: "NOTICE", color: "text-ag-cyan", bg: "bg-ag-cyan/10", border: "border-ag-cyan/30", dot: "bg-ag-cyan" };
+    if (severity >= 8) return {
+        label: "CRITICAL",
+        color: "var(--red)",
+        tint: "var(--red-tint)",
+        leftBorder: "var(--red)",
+    };
+    if (severity >= 5) return {
+        label: "WARNING",
+        color: "var(--amber)",
+        tint: "var(--amber-tint)",
+        leftBorder: "var(--amber)",
+    };
+    return {
+        label: "NOTICE",
+        color: "var(--blue)",
+        tint: "var(--blue-tint)",
+        leftBorder: "var(--blue)",
+    };
 };
 
 const categoryLabels: Record<string, string> = {
@@ -93,29 +86,85 @@ const categoryLabels: Record<string, string> = {
 
 export default function RedFlagTerminal({ flags = MOCK_FLAGS }: RedFlagTerminalProps) {
     return (
-        <div className="card-glass overflow-hidden">
-            {/* Terminal Header */}
-            <div className="px-5 py-3 border-b border-ag-border bg-ag-bg2/60 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1.5">
-                        <div className="w-3 h-3 rounded-full bg-ag-red/80" />
-                        <div className="w-3 h-3 rounded-full bg-ag-amber/60" />
-                        <div className="w-3 h-3 rounded-full bg-ag-green/60" />
+        <div
+            style={{
+                background: "var(--paper-2)",
+                border: "1px solid var(--rule)",
+                borderRadius: 4,
+                overflow: "hidden",
+            }}
+        >
+            {/* Document header */}
+            <div
+                style={{
+                    padding: "14px 20px",
+                    borderBottom: "1px solid var(--rule)",
+                    background: "var(--paper)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                }}
+            >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div
+                        style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 4,
+                            background: "var(--paper-2)",
+                            border: "1px solid var(--rule)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <svg style={{ width: 13, height: 13 }} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                            <line x1="12" y1="9" x2="12" y2="13" />
+                            <line x1="12" y1="17" x2="12.01" y2="17" />
+                        </svg>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-ag-red" />
-                        <span className="text-xs font-mono font-semibold text-ag-red uppercase tracking-widest">
-                            Live Analysis
-                        </span>
+                    <div>
+                        <h3
+                            style={{
+                                fontFamily: "var(--font-source-serif, Georgia, serif)",
+                                fontSize: 14,
+                                fontWeight: 600,
+                                color: "var(--ink)",
+                                margin: 0,
+                            }}
+                        >
+                            Forensic Evidence Log
+                        </h3>
+                        <p
+                            style={{
+                                fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                                fontSize: 9,
+                                fontWeight: 500,
+                                letterSpacing: "0.14em",
+                                textTransform: "uppercase",
+                                color: "var(--ink-faint)",
+                                margin: 0,
+                            }}
+                        >
+                            Linguistic Stress Detection · 10-K Filing
+                        </p>
                     </div>
                 </div>
-                <span className="text-[10px] font-mono text-ag-muted">
-                    {flags.length} flags detected
+                <span
+                    style={{
+                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                        fontSize: 9,
+                        color: flags.length > 0 ? "var(--red)" : "var(--ink-faint)",
+                        fontWeight: flags.length > 0 ? 600 : 400,
+                    }}
+                >
+                    {flags.length} flag{flags.length !== 1 ? "s" : ""} detected
                 </span>
             </div>
 
-            {/* Terminal Body */}
-            <div className="p-4 max-h-[500px] overflow-y-auto space-y-3 font-mono">
+            {/* Evidence log body */}
+            <div style={{ padding: 16, maxHeight: 520, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
                 {flags.map((flag, i) => {
                     const sev = severityConfig(flag.severity);
                     const timestamp = `${String(21 + Math.floor(i / 60)).padStart(2, "0")}:${String((i * 7 + 14) % 60).padStart(2, "0")}:${String((i * 13 + 42) % 60).padStart(2, "0")}`;
@@ -123,55 +172,122 @@ export default function RedFlagTerminal({ flags = MOCK_FLAGS }: RedFlagTerminalP
                     return (
                         <div
                             key={i}
-                            className={`
-                group rounded-lg border p-4 transition-all duration-300
-                hover:bg-ag-card-hover
-                ${sev.border} bg-ag-bg2/40
-              `}
-                            style={{ animationDelay: `${i * 0.1}s` }}
+                            style={{
+                                background: "var(--paper-2)",
+                                border: "1px solid var(--rule)",
+                                borderLeft: `4px solid ${sev.leftBorder}`,
+                                borderRadius: "0 4px 4px 0",
+                                padding: "14px 16px",
+                            }}
                         >
                             {/* Meta row */}
-                            <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                <span className="text-[10px] text-ag-muted">[{timestamp}]</span>
+                            <div
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    marginBottom: 10,
+                                    flexWrap: "wrap",
+                                }}
+                            >
                                 <span
-                                    className={`
-                    px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider
-                    ${sev.bg} ${sev.color} border ${sev.border}
-                  `}
+                                    style={{
+                                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                                        fontSize: 9,
+                                        color: "var(--ink-faint)",
+                                    }}
+                                >
+                                    [{timestamp}]
+                                </span>
+                                <span
+                                    style={{
+                                        padding: "2px 7px",
+                                        borderRadius: 3,
+                                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                                        fontSize: 9,
+                                        fontWeight: 600,
+                                        letterSpacing: "0.1em",
+                                        textTransform: "uppercase",
+                                        background: sev.tint,
+                                        color: sev.color,
+                                    }}
                                 >
                                     {sev.label}
                                 </span>
-                                <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-ag-surface text-ag-text2 border border-ag-border">
+                                <span
+                                    style={{
+                                        padding: "2px 7px",
+                                        borderRadius: 3,
+                                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                                        fontSize: 9,
+                                        fontWeight: 500,
+                                        letterSpacing: "0.1em",
+                                        textTransform: "uppercase",
+                                        background: "var(--paper)",
+                                        color: "var(--ink-2)",
+                                        border: "1px solid var(--rule)",
+                                    }}
+                                >
                                     {categoryLabels[flag.category] || flag.category.toUpperCase()}
                                 </span>
-                                <span className="text-[10px] text-ag-muted ml-auto">
+                                <span
+                                    style={{
+                                        marginLeft: "auto",
+                                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                                        fontSize: 9,
+                                        color: "var(--ink-faint)",
+                                    }}
+                                >
                                     SEV {flag.severity}/10
                                 </span>
                             </div>
 
-                            {/* Suspicious sentence */}
-                            <p className="text-xs text-ag-text leading-relaxed mb-2">
-                                <span className="text-ag-muted">&quot;</span>
-                                <span className="italic">{flag.sentence}</span>
-                                <span className="text-ag-muted">&quot;</span>
+                            {/* Filing excerpt — serif italic */}
+                            <p
+                                style={{
+                                    fontFamily: "var(--font-source-serif, Georgia, serif)",
+                                    fontStyle: "italic",
+                                    fontSize: 13,
+                                    color: "var(--ink)",
+                                    lineHeight: 1.6,
+                                    marginBottom: 10,
+                                    margin: "0 0 10px 0",
+                                }}
+                            >
+                                &quot;{flag.sentence}&quot;
                             </p>
 
-                            {/* AI Explanation */}
-                            <div className="flex gap-2">
-                                <span className="text-ag-muted text-[10px] mt-0.5 shrink-0">▸</span>
-                                <p className="text-[11px] text-ag-text2 leading-relaxed">
-                                    <TypewriterText text={flag.explanation} delay={i * 200 + 300} />
-                                </p>
-                            </div>
+                            {/* Hairline divider */}
+                            <div style={{ height: 1, background: "var(--rule)", marginBottom: 10 }} />
+
+                            {/* Analyst note */}
+                            <p
+                                style={{
+                                    fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)",
+                                    fontSize: 11,
+                                    color: "var(--ink-2)",
+                                    lineHeight: 1.55,
+                                    margin: 0,
+                                }}
+                            >
+                                {flag.explanation}
+                            </p>
                         </div>
                     );
                 })}
 
-                {/* Terminal cursor */}
-                <div className="flex items-center gap-2 py-2">
-                    <span className="text-ag-green text-xs">▶</span>
-                    <span className="text-xs text-ag-muted">Analysis complete. Awaiting next query...</span>
-                    <span className="w-2 h-4 bg-ag-green/60" />
+                {/* Log footer */}
+                <div
+                    style={{
+                        padding: "8px 4px",
+                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                        fontSize: 10,
+                        color: "var(--ink-faint)",
+                        borderTop: "1px solid var(--rule)",
+                        marginTop: 4,
+                    }}
+                >
+                    Analysis complete · {flags.length} finding{flags.length !== 1 ? "s" : ""} recorded
                 </div>
             </div>
         </div>

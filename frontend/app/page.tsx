@@ -7,7 +7,7 @@ import RiskOverview, { type RiskOverviewData } from "@/components/RiskOverview";
 import MetricCard from "@/components/MetricCard";
 import MonteCarloChart from "@/components/MonteCarloChart";
 import ApiKeyBanner from "@/components/ApiKeyBanner";
-import { AnimatedSection, AnimatedList, FadeTransition } from "@/components/AnimatedSection";
+import { AnimatedSection, FadeTransition } from "@/components/AnimatedSection";
 import {
   fetchFinancials,
   calculateZScore,
@@ -42,24 +42,18 @@ export default function DashboardPage() {
     setMonteCarloData(null);
 
     try {
-      // Fetch financials from SEC EDGAR
       const financials = await fetchFinancials(ticker);
       setLastRevenue(financials.revenue);
 
-      // Calculate Z-Score
       const result = await calculateZScore(financials);
       setZScore(result);
 
-      // Fetch company name
       let companyName = ticker;
       try {
         const info = await fetchCompanyInfo(ticker);
         companyName = info.name || ticker;
-      } catch {
-        // Company name is optional
-      }
+      } catch { /* optional */ }
 
-      // Map to RiskOverview format
       setRiskData({
         ticker: result.ticker,
         companyName,
@@ -93,11 +87,8 @@ export default function DashboardPage() {
         initial_revenue: lastRevenue || undefined,
       });
       setMonteCarloData(result);
-    } catch {
-      // Monte Carlo is non-critical
-    } finally {
-      setMcLoading(false);
-    }
+    } catch { /* non-critical */ }
+    finally { setMcLoading(false); }
   }, [searchedTicker, lastRevenue]);
 
   const trendFor = (val: number): "up" | "down" | "neutral" => {
@@ -106,47 +97,123 @@ export default function DashboardPage() {
     return "neutral";
   };
 
-  const colorFor = (val: number): "green" | "amber" | "red" | "cyan" => {
+  const colorFor = (val: number): "green" | "amber" | "red" | "blue" => {
     if (val > 0.3) return "green";
-    if (val > 0.1) return "cyan";
+    if (val > 0.1) return "blue";   // was "cyan", now remapped to "blue"
     if (val > 0) return "amber";
     return "red";
   };
 
   return (
-    <div className="min-h-screen bg-ag-bg flex flex-col">
+    <div style={{ minHeight: "100vh", background: "var(--paper)", display: "flex", flexDirection: "column" }}>
       <DashboardHeader />
       <ApiKeyBanner show={geminiMissing} />
 
-      <main className="flex-1 w-full max-w-[1480px] mx-auto px-4 sm:px-6 py-8">
-        {/* Hero / Search Section */}
-        <AnimatedSection className="text-center mb-10">
-          <h2 className="text-3xl sm:text-4xl font-bold text-ag-text tracking-tight mb-2">
-            Credit Risk{" "}
-            <span className="text-gradient-green">Intelligence</span>
-          </h2>
-          <p className="text-sm text-ag-text2 max-w-lg mx-auto mb-8">
-            Institutional-grade financial forensics powered by Altman Z-Score
-            analysis, Monte Carlo simulation, and global market data.
-          </p>
-          <TickerSearch onSearch={handleSearch} isLoading={isLoading} />
+      <main style={{ flex: 1, width: "100%", maxWidth: 1480, margin: "0 auto", padding: "40px 24px" }}>
+
+        {/* ── Hero / Search ── */}
+        <AnimatedSection className="mb-12">
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }} className="text-center">
+
+            {/* Eyebrow */}
+            <p style={{
+              fontFamily: "var(--font-ibm-plex-mono, monospace)",
+              fontSize: 10,
+              fontWeight: 500,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--green)",
+              marginBottom: 12,
+            }}>
+              Forensic Credit Research
+            </p>
+
+            {/* Serif headline */}
+            <h2 style={{
+              fontFamily: "var(--font-source-serif, Georgia, serif)",
+              fontSize: "clamp(28px, 4vw, 44px)",
+              fontWeight: 700,
+              color: "var(--ink)",
+              lineHeight: 1.15,
+              letterSpacing: "-0.02em",
+              marginBottom: 12,
+            }}>
+              Credit Risk{" "}
+              <span style={{ color: "var(--green)" }}>Intelligence</span>
+            </h2>
+
+            {/* Sans subhead */}
+            <p style={{
+              fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)",
+              fontSize: 14,
+              color: "var(--ink-2)",
+              maxWidth: 480,
+              lineHeight: 1.6,
+              marginBottom: 32,
+            }}>
+              Institutional-grade financial forensics powered by Altman Z-Score
+              analysis, Monte Carlo simulation, and global market data.
+            </p>
+
+            {/* Case meta box */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0,
+              marginBottom: 28,
+              background: "var(--paper-2)",
+              border: "1px solid var(--rule)",
+              borderRadius: 4,
+              overflow: "hidden",
+            }}>
+              {[
+                { label: "Platform", value: "Alpha-Guard v0.3" },
+                { label: "Coverage", value: "SEC EDGAR · NYSE · BSE" },
+                { label: "Model", value: "Altman Z-Score (1968)" },
+              ].map((item, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: "8px 16px",
+                    borderRight: i < 2 ? "1px solid var(--rule)" : "none",
+                    textAlign: "center",
+                  }}
+                >
+                  <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 8, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-faint)", marginBottom: 2 }}>{item.label}</p>
+                  <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, fontWeight: 600, color: "var(--ink)" }}>{item.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <TickerSearch onSearch={handleSearch} isLoading={isLoading} />
+          </div>
         </AnimatedSection>
 
-        {/* Error Display */}
+        {/* ── Error ── */}
         {error && (
           <AnimatedSection className="mb-6">
-            <div className="card-glass p-4" style={{ borderColor: "rgba(239,68,68,0.3)" }}>
-              <div className="flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-ag-red" />
-                <p className="text-sm text-ag-text2">{error}</p>
-              </div>
+            <div style={{
+              background: "var(--red-tint)",
+              borderLeft: "4px solid var(--red)",
+              borderRadius: "0 4px 4px 0",
+              padding: "12px 16px",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}>
+              <svg style={{ width: 14, height: 14, color: "var(--red)", flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+              <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 13, color: "var(--ink-2)" }}>{error}</p>
             </div>
           </AnimatedSection>
         )}
 
-        {/* Z-Score Metric Cards */}
+        {/* ── Z-Score Metric Cards — connected border grid ── */}
         <FadeTransition transitionKey={`metrics-${searchedTicker}`}>
-          <AnimatedList className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "var(--rule)", border: "1px solid var(--rule)", borderRadius: 4, overflow: "hidden", marginBottom: 24 }} className="grid-cols-2 md:grid-cols-4">
             <MetricCard
               label="Working Capital"
               value={zScore ? zScore.components.x1_working_capital_to_total_assets.toFixed(4) : "—.——"}
@@ -159,7 +226,7 @@ export default function DashboardPage() {
               value={zScore ? zScore.components.x2_retained_earnings_to_total_assets.toFixed(4) : "—.——"}
               subtitle="X2 · Retained Earnings / Assets"
               trend={zScore ? trendFor(zScore.components.x2_retained_earnings_to_total_assets) : "neutral"}
-              accentColor={zScore ? colorFor(zScore.components.x2_retained_earnings_to_total_assets) : "cyan"}
+              accentColor={zScore ? colorFor(zScore.components.x2_retained_earnings_to_total_assets) : "blue"}
             />
             <MetricCard
               label="Operating Efficiency"
@@ -175,49 +242,79 @@ export default function DashboardPage() {
               trend={zScore ? trendFor(zScore.components.x4_market_cap_to_total_liabilities) : "neutral"}
               accentColor={zScore ? colorFor(zScore.components.x4_market_cap_to_total_liabilities) : "green"}
             />
-          </AnimatedList>
+          </div>
         </FadeTransition>
 
-        {/* Risk Overview Card */}
+        {/* ── Risk Overview ── */}
         <AnimatedSection delay={0.2} className="mb-8">
           <FadeTransition transitionKey={`risk-${searchedTicker}`}>
             <RiskOverview data={riskData} />
           </FadeTransition>
         </AnimatedSection>
 
-        {/* Monte Carlo Section */}
+        {/* ── Monte Carlo Section ── */}
         <AnimatedSection delay={0.3} className="mb-8">
-          <div className="card-glass p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-ag-surface flex items-center justify-center">
-                  <svg className="w-4 h-4 text-ag-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <div style={{
+            background: "var(--paper-2)",
+            border: "1px solid var(--rule)",
+            borderRadius: 4,
+            padding: 24,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: 4,
+                  background: "var(--paper)", border: "1px solid var(--rule)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <svg style={{ width: 13, height: 13, color: "var(--ink-faint)" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                     <path d="M12 20V10" />
                     <path d="M18 20V4" />
                     <path d="M6 20v-4" />
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-ag-text">Monte Carlo Simulation</h3>
-                  <p className="text-[10px] font-mono text-ag-muted uppercase tracking-wider">
+                  <h3 style={{ fontFamily: "var(--font-source-serif, Georgia, serif)", fontSize: 15, fontWeight: 600, color: "var(--ink)", margin: 0 }}>
+                    Monte Carlo Simulation
+                  </h3>
+                  <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-faint)", margin: 0 }}>
                     Revenue Stress Testing · 1,000 Paths
                   </p>
                 </div>
               </div>
+
               {searchedTicker && (
                 <button
+                  id="run-stress-test-btn"
                   onClick={handleStressTest}
                   disabled={mcLoading}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-ag-cyan/10 text-ag-cyan border border-ag-cyan/20 hover:bg-ag-cyan/20 hover:border-ag-cyan/40 transition-all duration-200 text-xs font-mono font-semibold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "7px 16px",
+                    borderRadius: 4,
+                    background: mcLoading ? "var(--paper)" : "var(--green)",
+                    color: mcLoading ? "var(--ink-2)" : "#ffffff",
+                    border: `1px solid ${mcLoading ? "var(--rule-strong)" : "var(--green)"}`,
+                    fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    cursor: mcLoading ? "not-allowed" : "pointer",
+                    opacity: mcLoading ? 0.7 : 1,
+                    transition: "all 0.15s ease",
+                  }}
                 >
                   {mcLoading ? (
                     <>
-                      <div className="w-3 h-3 border-2 border-ag-cyan/30 border-t-ag-cyan rounded-full animate-spin" />
+                      <div style={{ width: 10, height: 10, border: "2px solid var(--rule)", borderTopColor: "var(--green)", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
                       Running...
                     </>
                   ) : (
                     <>
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                      <svg style={{ width: 10, height: 10 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                         <polygon points="5 3 19 12 5 21 5 3" />
                       </svg>
                       Run Stress Test
@@ -230,13 +327,25 @@ export default function DashboardPage() {
             {monteCarloData ? (
               <MonteCarloChart data={monteCarloData} />
             ) : (
-              <div className="h-32 rounded-lg bg-ag-surface/50 border border-ag-border border-dashed flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-xs text-ag-muted font-mono">
-                    {searchedTicker ? `Ticker ${searchedTicker} ready — click "Run Stress Test" above` : "Simulation Engine Ready"}
+              <div style={{
+                height: 120,
+                borderRadius: 4,
+                background: "var(--paper)",
+                border: "1px dashed var(--rule-strong)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}>
+                <div style={{ textAlign: "center" }}>
+                  <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 11, color: "var(--ink-faint)" }}>
+                    {searchedTicker
+                      ? `${searchedTicker} ready — click "Run Stress Test" above`
+                      : "Simulation Engine Ready"}
                   </p>
-                  <p className="text-[10px] text-ag-muted/60 mt-1">
-                    {searchedTicker ? "1,000 GBM revenue paths will be generated" : "Search a ticker first to enable stress testing"}
+                  <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)", marginTop: 4, opacity: 0.6 }}>
+                    {searchedTicker
+                      ? "1,000 GBM revenue paths will be generated"
+                      : "Search a ticker first to enable stress testing"}
                   </p>
                 </div>
               </div>
@@ -244,55 +353,102 @@ export default function DashboardPage() {
           </div>
         </AnimatedSection>
 
-        {/* Data Sources Panel */}
+        {/* ── Data Sources Panel ── */}
         <AnimatedSection delay={0.4} className="mb-8">
-          <div className="card-glass p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 rounded-lg bg-ag-surface flex items-center justify-center">
-                <svg className="w-4 h-4 text-ag-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <div style={{
+            background: "var(--paper-2)",
+            border: "1px solid var(--rule)",
+            borderRadius: 4,
+            overflow: "hidden",
+          }}>
+            {/* Panel header */}
+            <div style={{
+              padding: "14px 20px",
+              borderBottom: "1px solid var(--rule)",
+              background: "var(--paper)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}>
+              <div style={{ width: 28, height: 28, borderRadius: 4, background: "var(--paper-2)", border: "1px solid var(--rule)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg style={{ width: 13, height: 13, color: "var(--ink-faint)" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <ellipse cx="12" cy="5" rx="9" ry="3" />
                   <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
                   <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
                 </svg>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-ag-text">Data Sources</h3>
-                <p className="text-[10px] font-mono text-ag-muted uppercase tracking-wider">Ingestion Pipeline</p>
+                <h3 style={{ fontFamily: "var(--font-source-serif, Georgia, serif)", fontSize: 14, fontWeight: 600, color: "var(--ink)", margin: 0 }}>Data Sources</h3>
+                <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-faint)", margin: 0 }}>Ingestion Pipeline</p>
               </div>
             </div>
-            <div className="space-y-3">
-              {[
-                { name: "SEC EDGAR", status: "Connected", detail: "10-K XBRL · www.sec.gov", active: true },
-                { name: "Yahoo Finance", status: "Connected", detail: "yfinance · Global Markets (BSE/NSE/LSE)", active: true },
-                { name: "Gemini AI", status: geminiMissing ? "Not Configured" : (searchedTicker ? "Active" : "Idle"), detail: "Forensic Linguistic Analysis", active: !geminiMissing && !!searchedTicker },
-                { name: "Monte Carlo", status: monteCarloData ? "Active" : "Idle", detail: "GBM Revenue Simulation · 1K Paths", active: !!monteCarloData },
-              ].map((source) => (
-                <div key={source.name} className="flex items-center justify-between py-2 px-3 rounded-lg bg-ag-surface/40 border border-ag-border">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full ${source.active ? "bg-ag-green animate-pulse-soft" : "bg-ag-amber/50"}`} />
-                    <div>
-                      <p className="text-xs font-semibold text-ag-text">{source.name}</p>
-                      <p className="text-[10px] font-mono text-ag-muted">{source.detail}</p>
-                    </div>
+
+            {/* Flat rows with hairline dividers */}
+            {[
+              { name: "SEC EDGAR",   status: "Connected",        detail: "10-K XBRL · www.sec.gov",                      active: true,                                    type: "green" },
+              { name: "Yahoo Finance", status: "Connected",      detail: "yfinance · Global Markets (BSE/NSE/LSE)",       active: true,                                    type: "green" },
+              { name: "Gemini AI",   status: geminiMissing ? "Not Configured" : (searchedTicker ? "Active" : "Idle"), detail: "Forensic Linguistic Analysis", active: !geminiMissing && !!searchedTicker, type: "blue" },
+              { name: "Monte Carlo", status: monteCarloData ? "Active" : "Idle", detail: "GBM Revenue Simulation · 1K Paths", active: !!monteCarloData,               type: "blue" },
+            ].map((source, i, arr) => (
+              <div
+                key={source.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "11px 20px",
+                  borderBottom: i < arr.length - 1 ? "1px solid var(--rule)" : "none",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: source.active
+                      ? (source.type === "blue" ? "var(--blue)" : "var(--green)")
+                      : "var(--rule-strong)",
+                    flexShrink: 0,
+                  }} />
+                  <div>
+                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 11, fontWeight: 600, color: "var(--ink)", margin: 0 }}>{source.name}</p>
+                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)", margin: 0 }}>{source.detail}</p>
                   </div>
-                  <span className={`text-[10px] font-mono font-semibold uppercase ${source.active ? "text-ag-green" : "text-ag-amber"}`}>
-                    {source.status}
-                  </span>
                 </div>
-              ))}
-            </div>
+                <span
+                  style={{
+                    padding: "2px 8px",
+                    borderRadius: 3,
+                    fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                    fontSize: 9,
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    background: source.active
+                      ? (source.type === "blue" ? "var(--blue-tint)" : "var(--green-tint)")
+                      : "var(--paper)",
+                    color: source.active
+                      ? (source.type === "blue" ? "var(--blue)" : "var(--green)")
+                      : "var(--ink-faint)",
+                    border: `1px solid ${source.active
+                      ? (source.type === "blue" ? "var(--blue-tint)" : "var(--green-tint)")
+                      : "var(--rule)"}`,
+                  }}
+                >
+                  {source.status}
+                </span>
+              </div>
+            ))}
           </div>
         </AnimatedSection>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-ag-border py-4 px-6">
-        <div className="max-w-[1480px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p className="text-[10px] font-mono text-ag-muted">
+      <footer style={{ borderTop: "1px solid var(--rule)", padding: "14px 24px" }}>
+        <div style={{ maxWidth: 1480, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>
             ALPHA-GUARD v0.3.0 · Forensic Credit Risk Platform
           </p>
-          <p className="text-[10px] font-mono text-ag-muted">
-            Powered by FastAPI · Next.js · SEC EDGAR · Yahoo Finance · Google Gemini
+          <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>
+            FastAPI · Next.js · SEC EDGAR · Yahoo Finance · Google Gemini
           </p>
         </div>
       </footer>

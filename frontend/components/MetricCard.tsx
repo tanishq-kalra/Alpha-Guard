@@ -7,34 +7,15 @@ interface MetricCardProps {
     value: string;
     subtitle?: string;
     trend?: "up" | "down" | "neutral";
-    accentColor?: "green" | "amber" | "red" | "cyan";
+    accentColor?: "green" | "amber" | "red" | "cyan" | "blue";
 }
 
 const colorMap = {
-    green: {
-        text: "text-ag-green",
-        bg: "bg-ag-green/8",
-        border: "border-ag-green/15",
-        dot: "bg-ag-green",
-    },
-    amber: {
-        text: "text-ag-amber",
-        bg: "bg-ag-amber/8",
-        border: "border-ag-amber/15",
-        dot: "bg-ag-amber",
-    },
-    red: {
-        text: "text-ag-red",
-        bg: "bg-ag-red/8",
-        border: "border-ag-red/15",
-        dot: "bg-ag-red",
-    },
-    cyan: {
-        text: "text-ag-cyan",
-        bg: "bg-ag-cyan/8",
-        border: "border-ag-cyan/15",
-        dot: "bg-ag-cyan",
-    },
+    green: { text: "var(--green)",  tint: "var(--green-tint)" },
+    amber: { text: "var(--amber)",  tint: "var(--amber-tint)" },
+    red:   { text: "var(--red)",    tint: "var(--red-tint)"   },
+    cyan:  { text: "var(--blue)",   tint: "var(--blue-tint)"  }, // cyan → blue in new palette
+    blue:  { text: "var(--blue)",   tint: "var(--blue-tint)"  },
 };
 
 export default function MetricCard({
@@ -44,29 +25,67 @@ export default function MetricCard({
     trend = "neutral",
     accentColor = "green",
 }: MetricCardProps) {
-    const colors = colorMap[accentColor];
+    const colors = colorMap[accentColor] ?? colorMap.green;
+    const isNegative = trend === "down";
+    const isPositive = trend === "up";
 
     return (
         <div
-            className={`
-        card-glass group p-5 flex flex-col gap-2
-        hover:scale-[1.01] cursor-default
-      `}
+            style={{
+                background: "var(--paper-2)",
+                border: "1px solid var(--rule)",
+                borderRadius: 4,
+                padding: "18px 20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                transition: "box-shadow 0.15s ease, transform 0.15s ease",
+                cursor: "default",
+            }}
+            onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.boxShadow = "var(--shadow-md)";
+                (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)";
+            }}
+            onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.boxShadow = "";
+                (e.currentTarget as HTMLElement).style.transform = "";
+            }}
         >
-            {/* Header row */}
-            <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-ag-muted uppercase tracking-wider">
+            {/* Eyebrow label + trend indicator */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span
+                    style={{
+                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                        fontSize: 9,
+                        fontWeight: 500,
+                        letterSpacing: "0.15em",
+                        textTransform: "uppercase",
+                        color: "var(--ink-faint)",
+                    }}
+                >
                     {label}
                 </span>
                 {trend !== "neutral" && (
                     <div
-                        className={`
-              flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono
-              ${trend === "up" ? `${colorMap.green.bg} ${colorMap.green.text}` : `${colorMap.red.bg} ${colorMap.red.text}`}
-            `}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                            padding: "2px 6px",
+                            borderRadius: 3,
+                            background: isPositive ? "var(--green-tint)" : "var(--red-tint)",
+                            fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                            fontSize: 9,
+                            fontWeight: 600,
+                            color: isPositive ? "var(--green)" : "var(--red)",
+                        }}
                     >
                         <svg
-                            className={`w-3 h-3 ${trend === "down" ? "rotate-180" : ""}`}
+                            style={{
+                                width: 10,
+                                height: 10,
+                                transform: isNegative ? "rotate(180deg)" : "none",
+                            }}
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -74,29 +93,65 @@ export default function MetricCard({
                         >
                             <polyline points="18 15 12 9 6 15" />
                         </svg>
-                        {trend === "up" ? "+" : "-"}
+                        {isPositive ? "+" : "−"}
                     </div>
                 )}
             </div>
 
-            {/* Value */}
-            <p className={`text-2xl font-semibold font-mono tracking-tight ${colors.text}`}>
+            {/* Large serif value */}
+            <p
+                style={{
+                    fontFamily: "var(--font-source-serif, Georgia, serif)",
+                    fontSize: 28,
+                    fontWeight: 600,
+                    lineHeight: 1,
+                    letterSpacing: "-0.02em",
+                    color: colors.text,
+                    margin: 0,
+                }}
+            >
                 {value}
             </p>
 
-            {/* Subtitle */}
+            {/* Formula / subtitle */}
             {subtitle && (
-                <p className="text-[11px] text-ag-text2 font-mono">{subtitle}</p>
+                <p
+                    style={{
+                        fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                        fontSize: 10,
+                        color: "var(--ink-faint)",
+                        margin: 0,
+                        lineHeight: 1.4,
+                    }}
+                >
+                    {subtitle}
+                </p>
             )}
 
-            {/* Bottom accent line */}
-            <div className="mt-auto pt-3">
-                <div className="h-[2px] w-full rounded-full bg-ag-border overflow-hidden">
-                    <div
-                        className={`h-full rounded-full ${colors.dot} opacity-60 group-hover:opacity-100 transition-opacity duration-500`}
-                        style={{ width: "60%" }}
+            {/* Inline SVG sparkline — decorative, represents trending data */}
+            <div style={{ marginTop: 8 }}>
+                <svg
+                    viewBox="0 0 80 16"
+                    style={{ width: "100%", height: 14, display: "block" }}
+                    preserveAspectRatio="none"
+                >
+                    <polyline
+                        points={
+                            isPositive
+                                ? "0,12 10,10 20,11 30,8 40,9 50,6 60,5 70,3 80,2"
+                                : isNegative
+                                ? "0,4 10,5 20,4 30,7 40,6 50,9 60,10 70,12 80,14"
+                                : "0,8 10,7 20,9 30,8 40,7 50,9 60,8 70,7 80,8"
+                        }
+                        fill="none"
+                        stroke={colors.text}
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity="0.5"
+                        vectorEffect="non-scaling-stroke"
                     />
-                </div>
+                </svg>
             </div>
         </div>
     );
