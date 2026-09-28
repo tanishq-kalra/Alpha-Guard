@@ -8,7 +8,6 @@ interface TruthScoreGaugeProps {
     deceptionAlert?: boolean;
     deceptionReason?: string;
     aiConfidenceScore?: number | null;
-    isDemo?: boolean;
 }
 
 export default function TruthScoreGauge({
@@ -17,7 +16,6 @@ export default function TruthScoreGauge({
     deceptionAlert = false,
     deceptionReason,
     aiConfidenceScore,
-    isDemo = false,
 }: TruthScoreGaugeProps) {
     // Rendered after the audit returns, so a null score means "not scored", not "loading"
     const isPending = score === null || zone === null;
@@ -95,25 +93,7 @@ export default function TruthScoreGauge({
                         Credibility Index
                     </p>
                 </div>
-                {isDemo && (
-                    <span
-                        title="Simulated value, fixed per ticker. Not an analysis result."
-                        style={{
-                            marginLeft: "auto",
-                            padding: "2px 8px",
-                            borderRadius: 3,
-                            background: "var(--amber-tint)",
-                            color: "var(--amber)",
-                            fontFamily: "var(--font-ibm-plex-mono, monospace)",
-                            fontSize: 9,
-                            fontWeight: 600,
-                            letterSpacing: "0.12em",
-                        }}
-                    >
-                        DEMO
-                    </span>
-                )}
-                {!isDemo && aiConfidenceScore != null && (
+                {aiConfidenceScore != null && (
                     <span
                         style={{
                             marginLeft: "auto",
@@ -216,7 +196,7 @@ export default function TruthScoreGauge({
                     marginBottom: 14,
                 }}
             >
-                {isPending ? "Insufficient filing text" : zone}
+                {isPending ? "Not enough evidence" : zone}
             </div>
 
             {/* Zone scale bar */}

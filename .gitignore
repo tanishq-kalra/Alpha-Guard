@@ -35,3 +35,6 @@ desktop.ini
 
 # Test / tooling caches
 .pytest_cache/
+
+# Local data caches (earnings call transcripts)
+backend/.cache/

@@ -4,6 +4,19 @@ import { useState, useCallback, useRef } from "react";
 import DashboardHeader from "@/components/DashboardHeader";
 import TickerSearch from "@/components/TickerSearch";
 import { AnimatedSection, FadeTransition } from "@/components/AnimatedSection";
+import EarningsCallPanel from "@/components/EarningsCallPanel";
+import TruthBreakdown from "@/components/TruthBreakdown";
+import ConvictionPanel from "@/components/ConvictionPanel";
+import MonteCarloChart from "@/components/MonteCarloChart";
+import {
+    CompanySnapshot,
+    DataSources,
+    FinancialTrends,
+    Methodology,
+    ReportCover,
+    ReportSection,
+    RiskRegister,
+} from "@/components/report/ReportParts";
 import {
     runForensicAudit,
     zScoreComponentRows,
@@ -17,7 +30,7 @@ interface ReportData {
     companyName: string;
     timestamp: string;
     zScore: ZScoreResult | null;
-    forensic: ForensicAuditResponse | null;
+    forensic: ForensicAuditResponse;
 }
 
 export default function ReportsPage() {
@@ -50,7 +63,8 @@ export default function ReportsPage() {
     const handlePrint = () => window.print();
 
     const z = report?.zScore;
-    const f = report?.forensic?.forensic;
+    const f = report?.forensic.forensic;
+    const audit = report?.forensic;
 
     return (
         <div style={{ minHeight: "100vh", background: "var(--paper)", display: "flex", flexDirection: "column" }}>
@@ -85,12 +99,12 @@ export default function ReportsPage() {
                         letterSpacing: "-0.02em",
                         marginBottom: 12,
                     }}>
-                        Executive{" "}
+                        Research{" "}
                         <span style={{ color: "var(--green)" }}>Report</span>
                     </h2>
                     <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 14, color: "var(--ink-2)", maxWidth: 480, margin: "0 auto 32px" }}>
-                        Generate a comprehensive risk assessment report combining Z-Score
-                        analysis and forensic AI findings. Print-ready format.
+                        A full research report: investment conviction, financial trends, Z-Score,
+                        Truth Score, earnings call, stress test and risk register. Print-ready.
                     </p>
                     <TickerSearch onSearch={handleSearch} isLoading={isLoading} />
                 </AnimatedSection>
@@ -110,14 +124,14 @@ export default function ReportsPage() {
                         <div style={{ background: "var(--paper-2)", border: "1px solid var(--rule)", borderRadius: 4, padding: 40, textAlign: "center" }}>
                             <div style={{ width: 24, height: 24, border: "2px solid var(--rule)", borderTopColor: "var(--green)", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
                             <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 12, color: "var(--ink-2)" }}>
-                                Generating executive report...
+                                Generating research report...
                             </p>
                         </div>
                     </AnimatedSection>
                 )}
 
                 {/* ── Report ── */}
-                {report && !isLoading && (
+                {report && audit && !isLoading && (
                     <FadeTransition transitionKey={`report-${report.ticker}`}>
                         <div>
                             {/* Action Buttons */}
@@ -197,39 +211,28 @@ export default function ReportsPage() {
                                     overflow: "hidden",
                                 }}
                             >
-                                {/* Report Header */}
-                                <div style={{ padding: "24px 32px", borderBottom: "1px solid var(--rule)", background: "var(--paper)" }}>
-                                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-                                        <div>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                                                <span style={{ fontFamily: "var(--font-source-serif, Georgia, serif)", fontSize: 22, fontWeight: 700, color: "var(--ink)" }}>
-                                                    {report.ticker}
-                                                </span>
-                                                <span style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 14, color: "var(--ink-2)" }}>
-                                                    {report.companyName}
-                                                </span>
-                                            </div>
-                                            <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--ink-faint)" }}>
-                                                Alpha-Guard Executive Risk Report · Confidential
-                                            </p>
-                                        </div>
-                                        <div style={{ textAlign: "right" }}>
-                                            <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, color: "var(--ink-faint)" }}>
-                                                {new Date(report.timestamp).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
-                                            </p>
-                                            <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)", marginTop: 2 }}>
-                                                {new Date(report.timestamp).toLocaleTimeString()}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
+                                {/* Cover: key metrics, contents, team */}
+                                <ReportCover audit={audit} />
 
-                                {/* Z-Score Section */}
-                                <div style={{ padding: "24px 32px", borderBottom: "1px solid var(--rule)" }}>
-                                    <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--font-source-serif, Georgia, serif)", fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 20 }}>
-                                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)", flexShrink: 0 }} />
-                                        1. Altman Z-Score Analysis
-                                    </h3>
+                                <ReportSection id="summary">
+                                    {audit.conviction ? (
+                                        <ConvictionPanel conviction={audit.conviction} />
+                                    ) : (
+                                        <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 12, color: "var(--ink-faint)" }}>
+                                            Investment conviction unavailable for this ticker.
+                                        </p>
+                                    )}
+                                </ReportSection>
+
+                                <ReportSection id="snapshot" accent="var(--blue)">
+                                    <CompanySnapshot fin={audit.financials} />
+                                </ReportSection>
+
+                                <ReportSection id="trends" accent="var(--blue)">
+                                    <FinancialTrends history={audit.financials?.history} />
+                                </ReportSection>
+
+                                <ReportSection id="health" accent="var(--green)">
                                     {z ? (
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 32 }} className="grid-cols-1 md:grid-cols-3">
                                             {/* Score */}
@@ -296,26 +299,21 @@ export default function ReportsPage() {
                                         </div>
                                     ) : (
                                         <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 12, color: "var(--ink-faint)" }}>
-                                            {report.forensic?.data_sources.find((s) => s.startsWith("Z-Score not computed") || s.startsWith("Financial data unavailable"))
+                                            {audit.data_sources.find((s) => s.startsWith("Z-Score not computed") || s.startsWith("Financial data unavailable"))
                                                 ?? "Z-Score data unavailable for this ticker."}
                                         </p>
                                     )}
-                                </div>
+                                </ReportSection>
 
-                                {/* Forensic Section */}
-                                <div style={{ padding: "24px 32px", borderBottom: "1px solid var(--rule)" }}>
-                                    <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--font-source-serif, Georgia, serif)", fontSize: 15, fontWeight: 600, color: "var(--ink)", marginBottom: 20 }}>
-                                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--red)", flexShrink: 0 }} />
-                                        2. Forensic AI Analysis
-                                    </h3>
+                                <ReportSection id="forensic" accent="var(--red)">
                                     {f ? (
                                         <div>
                                             {/* Key Metrics */}
                                             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 0, border: "1px solid var(--rule)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
                                                 {[
                                                     f.truth_score === null
-                                                        ? { label: "Truth Score", value: "N/A", sub: "insufficient text", color: "var(--ink-faint)" }
-                                                        : { label: "Truth Score", value: String(f.truth_score), sub: `${f.truth_zone ?? ""}${f.truth_score_breakdown?.basis === "demo" ? " (demo)" : ""}`, color: f.truth_score >= 70 ? "var(--green)" : f.truth_score >= 40 ? "var(--amber)" : "var(--red)" },
+                                                        ? { label: "Truth Score", value: "N/A", sub: "not enough evidence", color: "var(--ink-faint)" }
+                                                        : { label: "Truth Score", value: String(f.truth_score), sub: f.truth_zone ?? "", color: f.truth_score >= 70 ? "var(--green)" : f.truth_score >= 40 ? "var(--amber)" : "var(--red)" },
                                                     { label: "Hedging", value: f.linguistic_analysis.hedging_score.toFixed(1), sub: "score", color: "var(--ink)" },
                                                     { label: "Evasion", value: f.linguistic_analysis.evasion_score.toFixed(1), sub: "score", color: "var(--ink)" },
                                                     { label: "Sentiment", value: f.linguistic_analysis.sentiment.toUpperCase(), sub: f.linguistic_analysis.sentiment_source === "lexicon" ? "lexicon tone" : f.linguistic_analysis.sentiment_source === "ai" ? "Gemini" : "", color: f.linguistic_analysis.sentiment === "bullish" ? "var(--green)" : f.linguistic_analysis.sentiment === "bearish" ? "var(--red)" : "var(--amber)" },
@@ -328,29 +326,15 @@ export default function ReportsPage() {
                                                 ))}
                                             </div>
 
-                                            {/* How the Truth Score was derived */}
-                                            {(f.truth_score_breakdown || f.analysis_note || report.forensic?.ai_error) && (
-                                                <div style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, color: "var(--ink-2)", lineHeight: 1.6, marginBottom: 20 }}>
-                                                    {f.truth_score_breakdown?.basis === "demo" && (
-                                                        <p style={{ color: "var(--amber)" }}>
-                                                            DEMO SCORE — simulated value, fixed per ticker; not an analysis result.
-                                                        </p>
-                                                    )}
-                                                    {f.truth_score_breakdown && f.truth_score_breakdown.basis !== "demo" && (
-                                                        <p>
-                                                            Truth Score = 100 − hedging {f.truth_score_breakdown.hedging_penalty}
-                                                            {" "}− evasion {f.truth_score_breakdown.evasion_penalty}
-                                                            {" "}− red flags {f.truth_score_breakdown.red_flag_penalty}
-                                                            {" "}− sentiment gap {f.truth_score_breakdown.sentiment_gap_penalty}
-                                                            {" "}({f.truth_score_breakdown.basis === "heuristic" ? "heuristics only" : "Gemini + heuristics"})
-                                                        </p>
-                                                    )}
-                                                    {f.analysis_note && <p style={{ color: "var(--ink-faint)" }}>{f.analysis_note}</p>}
-                                                    {report.forensic?.ai_error && !report.forensic.gemini_active && (
-                                                        <p style={{ color: "var(--amber)" }}>AI: {report.forensic.ai_error}</p>
-                                                    )}
-                                                </div>
-                                            )}
+                                            {/* How the Truth Score was built */}
+                                            <div style={{ marginBottom: 20 }}>
+                                                <TruthBreakdown
+                                                    breakdown={f.truth_score_breakdown}
+                                                    score={f.truth_score}
+                                                    note={f.analysis_note}
+                                                    aiNote={audit.gemini_active ? null : audit.ai_error}
+                                                />
+                                            </div>
 
                                             {/* Deception Alert */}
                                             {f.deception_alert && f.deception_reason && (
@@ -407,12 +391,45 @@ export default function ReportsPage() {
                                             Forensic analysis unavailable for this ticker.
                                         </p>
                                     )}
-                                </div>
+                                </ReportSection>
+
+                                <ReportSection id="call" accent="var(--amber)">
+                                    <EarningsCallPanel call={audit.earnings_call} />
+                                </ReportSection>
+
+                                <ReportSection id="stress" accent="var(--blue)">
+                                    {audit.monte_carlo ? (
+                                        <div>
+                                            {audit.monte_carlo.parameter_source && (
+                                                <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 12, color: "var(--ink-2)", marginBottom: 12 }}>
+                                                    Assumptions — {audit.monte_carlo.parameter_source}.
+                                                </p>
+                                            )}
+                                            <MonteCarloChart data={audit.monte_carlo} />
+                                        </div>
+                                    ) : (
+                                        <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 12, color: "var(--ink-faint)" }}>
+                                            Stress test not run (no revenue data).
+                                        </p>
+                                    )}
+                                </ReportSection>
+
+                                <ReportSection id="risks" accent="var(--red)">
+                                    <RiskRegister items={audit.risk_register} />
+                                </ReportSection>
+
+                                <ReportSection id="methodology">
+                                    <Methodology />
+                                </ReportSection>
+
+                                <ReportSection id="sources">
+                                    <DataSources audit={audit} />
+                                </ReportSection>
 
                                 {/* Report Footer */}
                                 <div style={{ padding: "10px 32px", background: "var(--paper)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                     <span style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>
-                                        ALPHA-GUARD v0.3.0 · Confidential
+                                        ALPHA-GUARD v0.5.0 · Research Report
                                     </span>
                                     <span style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>
                                         Generated by Alpha-Guard Forensic Credit Risk Platform
@@ -426,7 +443,7 @@ export default function ReportsPage() {
 
             <footer style={{ borderTop: "1px solid var(--rule)", padding: "14px 24px" }} className="print:hidden">
                 <div style={{ maxWidth: 1480, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>ALPHA-GUARD v0.3.0 · Executive Reports</p>
+                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>ALPHA-GUARD v0.5.0 · Research Reports</p>
                     <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>Powered by FastAPI · Next.js · SEC EDGAR · Google Gemini</p>
                 </div>
             </footer>

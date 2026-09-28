@@ -275,3 +275,65 @@ class TestGeminiErrorMessages:
 
     def test_unknown_model(self):
         assert "not found" in fa.describe_gemini_error(self._Err(404, "NOT_FOUND"))
+
+
+class TestGeminiRetry:
+
+    class _Err(Exception):
+        def __init__(self, code, text):
+            super().__init__(text)
+            self.code = code
+
+    def _patch_client(self, monkeypatch, outcomes):
+        """Fake google-genai client that returns/raises `outcomes` in order."""
+        import sys
+        import types as pytypes
+
+        calls = []
+
+        class Models:
+            async def generate_content(self, model, contents, config):
+                calls.append(model)
+                outcome = outcomes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return pytypes.SimpleNamespace(text=outcome)
+
+        class Client:
+            def __init__(self, api_key):
+                self.aio = pytypes.SimpleNamespace(models=Models())
+
+        genai_mod = pytypes.SimpleNamespace(Client=Client)
+        types_mod = pytypes.SimpleNamespace(GenerateContentConfig=lambda **kw: kw)
+        google_pkg = pytypes.ModuleType("google")
+        google_pkg.genai = genai_mod
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", genai_mod)
+        monkeypatch.setitem(sys.modules, "google.genai.types", types_mod)
+        genai_mod.types = types_mod
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        monkeypatch.setattr(fa, "GEMINI_RETRY_DELAY_SECONDS", 0.0)
+        return calls
+
+    async def test_retries_then_succeeds(self, monkeypatch):
+        calls = self._patch_client(monkeypatch, [self._Err(503, "UNAVAILABLE"), '{"sentiment": "neutral"}'])
+        result, error = await fa.call_gemini_analysis("text")
+        assert error is None and result == {"sentiment": "neutral"}
+        assert calls == [fa.GEMINI_MODEL, fa.GEMINI_MODEL]
+
+    async def test_falls_back_to_lighter_model(self, monkeypatch):
+        busy = self._Err(503, "UNAVAILABLE")
+        calls = self._patch_client(monkeypatch, [busy, busy, '{"sentiment": "bearish"}'])
+        result, _ = await fa.call_gemini_analysis("text")
+        assert result == {"sentiment": "bearish"} and calls[-1] == fa.GEMINI_FALLBACK_MODEL
+
+    async def test_quota_error_is_not_retried(self, monkeypatch):
+        calls = self._patch_client(monkeypatch, [self._Err(429, "RESOURCE_EXHAUSTED {'quota_limit_value': '0'}")])
+        result, error = await fa.call_gemini_analysis("text")
+        assert result is None and "quota" in error and len(calls) == 1
+
+    async def test_persistent_overload_message(self, monkeypatch):
+        busy = self._Err(503, "UNAVAILABLE")
+        self._patch_client(monkeypatch, [busy, busy, busy])
+        result, error = await fa.call_gemini_analysis("text")
+        assert result is None and "temporarily overloaded" in error

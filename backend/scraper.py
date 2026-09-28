@@ -17,8 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from config import SEC_USER_AGENT
-from models import FinancialData, CompanyInfo
-from risk_engine import ZScoreNotApplicable
+from models import CompanyInfo, FinancialData, HistoryPoint
 
 router = APIRouter(prefix="/api/data", tags=["Data Ingestion"])
 
@@ -65,8 +64,19 @@ XBRL_CONCEPT_MAP = {
     ],
 }
 
+# For banks, "RevenueFromContractWithCustomer..." covers only fee income; total
+# (net) revenue is reported under these tags instead.
+FINANCIAL_REVENUE_TAGS = ["RevenuesNetOfInterestExpense", "Revenues"] + XBRL_CONCEPT_MAP["revenue"]
+
 # Income-statement concepts are reported over a period; the rest are point-in-time
 DURATION_FIELDS = {"ebit", "revenue"}
+
+# Optional metrics for the earnings-quality check (not required for the Z-Score)
+NET_INCOME_TAGS = ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]
+OPERATING_CASH_FLOW_TAGS = [
+    "NetCashProvidedByUsedInOperatingActivities",
+    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+]
 
 ANNUAL_FORMS = {"10-K", "10-K/A"}
 
@@ -308,6 +318,43 @@ def extract_value_for_period(
     return None
 
 
+def prior_fiscal_year_end(facts: dict, period_end: str) -> str | None:
+    """The fiscal year-end before `period_end` (about 12 months earlier)."""
+    try:
+        current = date.fromisoformat(period_end)
+    except ValueError:
+        return None
+    candidates = [
+        e["end"] for e in _annual_entries(facts, "Assets")
+        if not e.get("start") and 330 <= (current - date.fromisoformat(e["end"])).days <= 400
+    ]
+    return max(candidates) if candidates else None
+
+
+HISTORY_YEARS = 5
+
+
+def build_history(facts: dict, period_end: str, revenue_tags: list[str], years: int = HISTORY_YEARS) -> list[HistoryPoint]:
+    """Headline figures for up to `years` consecutive fiscal years, newest first.
+
+    Walks back one fiscal year-end at a time, so every point is a full annual
+    period from a 10-K (restated figures preferred).
+    """
+    history: list[HistoryPoint] = []
+    end: str | None = period_end
+    while end and len(history) < years:
+        history.append(HistoryPoint(
+            fiscal_period_end=end,
+            revenue=extract_value_for_period(facts, revenue_tags, end, duration=True),
+            net_income=extract_value_for_period(facts, NET_INCOME_TAGS, end, duration=True),
+            operating_cash_flow=extract_value_for_period(facts, OPERATING_CASH_FLOW_TAGS, end, duration=True),
+            total_assets=extract_value_for_period(facts, ["Assets"], end, duration=False),
+            total_liabilities=_extract_total_liabilities(facts, end),
+        ))
+        end = prior_fiscal_year_end(facts, end)
+    return history
+
+
 def extract_latest_annual_value(facts: dict, concept_tags: list[str]) -> float | None:
     """Most recent annual value across tags (kept for ad-hoc lookups).
 
@@ -375,11 +422,11 @@ async def fetch_financial_data_from_edgar(ticker: str) -> FinancialData:
     except (TypeError, ValueError):
         pass
 
-    if sic_code is not None and 6000 <= sic_code <= 6799:
-        raise ZScoreNotApplicable(
-            f"{ticker.upper()} is a financial company (SIC {sic_code}). The Altman Z-Score "
-            "is not applicable to banks, insurers or investment firms."
-        )
+    # Banks/insurers: still collect their data (the Z-Score is refused later, but
+    # capital strength, profitability and valuation still apply). They have no
+    # current/non-current split and no operating-income line.
+    is_financial = sic_code is not None and 6000 <= sic_code <= 6799
+    optional_fields = {"current_assets", "current_liabilities", "ebit", "retained_earnings"} if is_financial else set()
 
     period_end = find_fiscal_period_end(facts)
     if period_end is None:
@@ -394,12 +441,17 @@ async def fetch_financial_data_from_edgar(ticker: str) -> FinancialData:
     for field, concepts in XBRL_CONCEPT_MAP.items():
         if field == "total_liabilities":
             value = _extract_total_liabilities(facts, period_end)
+        elif field == "revenue" and is_financial:
+            value = extract_value_for_period(facts, FINANCIAL_REVENUE_TAGS, period_end, duration=True)
         else:
             value = extract_value_for_period(facts, concepts, period_end, field in DURATION_FIELDS)
         if value is not None:
             extracted[field] = value
-        else:
+        elif field not in optional_fields:
             missing_fields.append(field)
+    if is_financial:
+        extracted.setdefault("ebit", 0.0)
+        extracted.setdefault("retained_earnings", 0.0)
 
     if missing_fields:
         raise HTTPException(
@@ -410,12 +462,19 @@ async def fetch_financial_data_from_edgar(ticker: str) -> FinancialData:
         )
 
     market_cap = await fetch_market_cap(ticker, facts)
+    revenue_tags = FINANCIAL_REVENUE_TAGS if is_financial else XBRL_CONCEPT_MAP["revenue"]
+    history = build_history(facts, period_end, revenue_tags)
 
     return FinancialData(
         ticker=ticker.upper(),
         market_cap=market_cap,
         sic_code=sic_code,
         fiscal_period_end=period_end,
+        history=history,
+        # Optional: used for the earnings-quality (accruals) check
+        net_income=extract_value_for_period(facts, NET_INCOME_TAGS, period_end, duration=True),
+        revenue_prior_year=history[1].revenue if len(history) > 1 else None,
+        operating_cash_flow=extract_value_for_period(facts, OPERATING_CASH_FLOW_TAGS, period_end, duration=True),
         **extracted,
     )
 
@@ -611,6 +670,10 @@ def _fetch_financial_data_yahoo_sync(normalized: str, info: dict) -> FinancialDa
     stock = yf.Ticker(normalized)
     bs = stock.balance_sheet
     financials = stock.financials
+    try:
+        cashflow = stock.cashflow
+    except Exception:
+        cashflow = None
 
     if bs is None or bs.empty:
         raise HTTPException(
@@ -620,11 +683,18 @@ def _fetch_financial_data_yahoo_sync(normalized: str, info: dict) -> FinancialDa
 
     latest_bs = bs.iloc[:, 0]
     period_end = str(bs.columns[0])[:10]
-    latest_fin = {}
+    latest_fin, prior_fin = {}, {}
     if financials is not None and not financials.empty:
         # Use the income statement for the same fiscal year as the balance sheet
         matching = [c for c in financials.columns if str(c)[:10] == period_end]
-        latest_fin = financials[matching[0]] if matching else financials.iloc[:, 0]
+        idx = list(financials.columns).index(matching[0]) if matching else 0
+        latest_fin = financials.iloc[:, idx]
+        if idx + 1 < financials.shape[1]:
+            prior_fin = financials.iloc[:, idx + 1]   # columns run newest first
+    latest_cf = {}
+    if cashflow is not None and not cashflow.empty:
+        matching = [c for c in cashflow.columns if str(c)[:10] == period_end]
+        latest_cf = cashflow[matching[0]] if matching else cashflow.iloc[:, 0]
 
     total_assets = _safe_get(latest_bs, ["Total Assets", "TotalAssets"])
     current_assets = _safe_get(latest_bs, ["Current Assets", "CurrentAssets"])
@@ -635,10 +705,13 @@ def _fetch_financial_data_yahoo_sync(normalized: str, info: dict) -> FinancialDa
     revenue = _safe_get(latest_fin, ["Total Revenue", "TotalRevenue", "Revenue"])
     market_cap = info.get("marketCap")
 
+    # Banks/insurers have no current/non-current split; everything else still applies
+    is_financial = (info.get("sector") or "").lower() == "financial services"
+
     missing = []
     if total_assets is None: missing.append("total_assets")
-    if current_assets is None: missing.append("current_assets")
-    if current_liabilities is None: missing.append("current_liabilities")
+    if current_assets is None and not is_financial: missing.append("current_assets")
+    if current_liabilities is None and not is_financial: missing.append("current_liabilities")
     if total_liabilities is None: missing.append("total_liabilities")
     if revenue is None: missing.append("revenue")
 
@@ -660,7 +733,37 @@ def _fetch_financial_data_yahoo_sync(normalized: str, info: dict) -> FinancialDa
         revenue=revenue,
         sector=info.get("sector") or "Unknown",
         fiscal_period_end=period_end,
+        net_income=_safe_get(latest_fin, ["Net Income", "NetIncome", "Net Income Common Stockholders"]),
+        revenue_prior_year=_safe_get(prior_fin, ["Total Revenue", "TotalRevenue", "Revenue"]),
+        operating_cash_flow=_safe_get(latest_cf, ["Operating Cash Flow", "OperatingCashFlow",
+                                                  "Cash Flow From Continuing Operating Activities"]),
+        history=_yahoo_history(bs, financials, cashflow),
     )
+
+
+def _yahoo_history(bs, financials, cashflow) -> list[HistoryPoint]:
+    """Annual history from Yahoo's statements (usually 4 years), newest first."""
+    def column(frame, end: str):
+        if frame is None or frame.empty:
+            return {}
+        matching = [c for c in frame.columns if str(c)[:10] == end]
+        return frame[matching[0]] if matching else {}
+
+    history = []
+    for col in list(bs.columns)[:HISTORY_YEARS]:
+        end = str(col)[:10]
+        b, f, c = bs[col], column(financials, end), column(cashflow, end)
+        history.append(HistoryPoint(
+            fiscal_period_end=end,
+            revenue=_safe_get(f, ["Total Revenue", "TotalRevenue", "Revenue"]),
+            net_income=_safe_get(f, ["Net Income", "NetIncome", "Net Income Common Stockholders"]),
+            operating_cash_flow=_safe_get(c, ["Operating Cash Flow", "OperatingCashFlow",
+                                              "Cash Flow From Continuing Operating Activities"]),
+            total_assets=_safe_get(b, ["Total Assets", "TotalAssets"]),
+            total_liabilities=_safe_get(b, ["Total Liabilities Net Minority Interest", "Total Liab",
+                                            "TotalLiabilitiesNetMinorityInterest"]),
+        ))
+    return history
 
 
 async def fetch_financial_data_yahoo(ticker: str) -> FinancialData:
@@ -680,12 +783,6 @@ async def fetch_financial_data_yahoo(ticker: str) -> FinancialData:
     normalized = normalize_ticker(ticker)
     info = await get_yahoo_info(normalized)
 
-    if (info.get("sector") or "").lower() == "financial services":
-        raise ZScoreNotApplicable(
-            f"{normalized.upper()} is a financial company. The Altman Z-Score "
-            "is not applicable to banks, insurers or investment firms."
-        )
-
     try:
         return await asyncio.to_thread(_fetch_financial_data_yahoo_sync, normalized, info)
     except HTTPException:
@@ -700,8 +797,7 @@ async def fetch_financial_data_yahoo(ticker: str) -> FinancialData:
 async def fetch_financial_data_auto(ticker: str) -> tuple[FinancialData, str]:
     """Smart routing: fetch from SEC EDGAR (US) or Yahoo Finance (international).
 
-    ZScoreNotApplicable propagates without a fallback: another data source
-    would not make a bank a valid Altman subject.
+    Financial companies are returned too; the Z-Score step decides applicability.
     """
     if is_international_ticker(ticker):
         data = await fetch_financial_data_yahoo(ticker)
@@ -760,10 +856,7 @@ async def api_company_info(ticker: str) -> CompanyInfo:
                 "(BSE/NSE/LSE etc.) to Yahoo Finance.",
 )
 async def api_financials(ticker: str) -> FinancialData:
-    try:
-        data, _ = await fetch_financial_data_auto(ticker)
-    except ZScoreNotApplicable as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    data, _ = await fetch_financial_data_auto(ticker)
     return data
 
 
@@ -775,7 +868,4 @@ async def api_financials(ticker: str) -> FinancialData:
                 "Supports all major world exchanges including BSE (.BO) and NSE (.NS).",
 )
 async def api_financials_global(ticker: str) -> FinancialData:
-    try:
-        return await fetch_financial_data_yahoo(ticker)
-    except ZScoreNotApplicable as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    return await fetch_financial_data_yahoo(ticker)

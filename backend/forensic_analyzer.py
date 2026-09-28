@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 
-from config import GEMINI_MODEL, gemini_api_key, truth_score_mode
+from config import GEMINI_MODEL, gemini_api_key
 from models import (
     FinancialData,
     ForensicRequest,
@@ -35,6 +35,8 @@ router = APIRouter(prefix="/api/risk", tags=["Forensic AI Analysis"])
 
 # Below this many MD&A words there is not enough narrative to judge credibility
 MIN_WORDS_FOR_ANALYSIS = 300
+# Same cap as a 10-K section, for the earnings-release fallback
+MAX_LANGUAGE_CHARS = 40_000
 
 # ──────────────────────────────────────────────
 #  Hedging & Evasion Lexicon
@@ -214,6 +216,8 @@ MD&A TEXT:
 """
 
 GEMINI_TIMEOUT_SECONDS = 90
+GEMINI_RETRY_DELAY_SECONDS = 3.0
+GEMINI_FALLBACK_MODEL = "gemini-flash-lite-latest"
 VALID_SENTIMENTS = {"bullish", "neutral", "bearish"}
 VALID_CATEGORIES = {"hedging", "evasion", "sentiment_gap", "inconsistency"}
 
@@ -243,6 +247,8 @@ def describe_gemini_error(error: Exception) -> str:
         return f"Gemini rate limit reached for {GEMINI_MODEL}. Wait a minute and retry, or check your quota."
     if code in (401, 403) or "API_KEY_INVALID" in text or "PERMISSION_DENIED" in text:
         return "Gemini rejected the API key (invalid or lacks permission). Check GEMINI_API_KEY."
+    if code == 503 or "UNAVAILABLE" in text:
+        return "Gemini is temporarily overloaded (Google reported high demand). Try the analysis again shortly."
     if code == 404 or "NOT_FOUND" in text:
         return f"Gemini model '{GEMINI_MODEL}' was not found. Set GEMINI_MODEL to an available model."
     return f"Gemini API error ({GEMINI_MODEL}): {text[:200]}"
@@ -265,28 +271,41 @@ async def call_gemini_analysis(mda_text: str) -> tuple[dict | None, str | None]:
     except ImportError:
         return None, "google-genai package not installed. Run: pip install google-genai"
 
-    try:
-        client = genai.Client(api_key=api_key)
-        # Truncate text to stay within a modest token budget (~30k chars ≈ ~8k tokens)
-        prompt = GEMINI_ANALYSIS_PROMPT + mda_text[:30000]
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.2,
-                ),
-            ),
-            timeout=GEMINI_TIMEOUT_SECONDS,
-        )
-        return _parse_gemini_json(response.text or ""), None
-    except asyncio.TimeoutError:
-        return None, f"Gemini ({GEMINI_MODEL}) timed out after {GEMINI_TIMEOUT_SECONDS}s."
-    except (json.JSONDecodeError, ValueError) as e:
-        return None, f"Gemini returned malformed JSON: {str(e)[:150]}"
-    except Exception as e:
-        return None, describe_gemini_error(e)
+    client = genai.Client(api_key=api_key)
+    # Truncate text to stay within a modest token budget (~30k chars ≈ ~8k tokens)
+    prompt = GEMINI_ANALYSIS_PROMPT + mda_text[:30000]
+    config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+
+    # Google returns 503 "high demand" during load spikes: wait briefly and retry,
+    # then fall back to the lighter Flash model before giving up.
+    attempts = [(GEMINI_MODEL, 0.0), (GEMINI_MODEL, GEMINI_RETRY_DELAY_SECONDS)]
+    if GEMINI_FALLBACK_MODEL != GEMINI_MODEL:
+        attempts.append((GEMINI_FALLBACK_MODEL, 0.0))
+
+    last_error = None
+    for model, delay in attempts:
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=model, contents=prompt, config=config),
+                timeout=GEMINI_TIMEOUT_SECONDS,
+            )
+            return _parse_gemini_json(response.text or ""), None
+        except asyncio.TimeoutError:
+            return None, f"Gemini ({model}) timed out after {GEMINI_TIMEOUT_SECONDS}s."
+        except (json.JSONDecodeError, ValueError) as e:
+            return None, f"Gemini returned malformed JSON: {str(e)[:150]}"
+        except Exception as e:
+            last_error = e
+            if not _is_transient_gemini_error(e):
+                break
+    return None, describe_gemini_error(last_error)
+
+
+def _is_transient_gemini_error(error: Exception) -> bool:
+    """Temporary overload (503 / UNAVAILABLE), worth retrying — unlike quota or key errors."""
+    return getattr(error, "code", None) == 503 or "UNAVAILABLE" in str(error)
 
 
 def _normalize_for_match(text: str) -> str:
@@ -428,82 +447,6 @@ def compute_truth_score(
 #  Main Analysis Pipeline
 # ──────────────────────────────────────────────
 
-# ──────────────────────────────────────────────
-#  Demo Mode
-# ──────────────────────────────────────────────
-
-DEMO_SCORE_MIN = 30
-DEMO_SCORE_MAX = 95
-
-
-def demo_truth_score(ticker: str) -> int:
-    """Simulated Truth Score, identical for the same ticker on every run and machine.
-
-    Derived from a SHA-256 hash of the ticker (Python's built-in hash() is
-    randomised per process, so it can't be used). Spans 30-95 so all three
-    zones appear across companies.
-    """
-    digest = hashlib.sha256(f"alpha-guard:{ticker.strip().upper()}".encode()).digest()
-    span = DEMO_SCORE_MAX - DEMO_SCORE_MIN + 1
-    return DEMO_SCORE_MIN + int.from_bytes(digest[:8], "big") % span
-
-
-def truth_zone_for(score: int) -> str:
-    if score >= 70:
-        return "Credible"
-    if score >= 40:
-        return "Suspicious"
-    return "Deceptive"
-
-
-def analyze_demo(
-    ticker: str,
-    mda_text: str,
-    risk_factors_text: str,
-    z_score_result: ZScoreResult | None = None,
-) -> ForensicResult:
-    """Demo-mode analysis: simulated Truth Score, no AI or network calls.
-
-    Hedging, evasion and tone are still measured from the filing text when it
-    is available, so those metrics stay real; only the Truth Score is simulated.
-    No red flags or deception alerts are produced, since those would be claims
-    about a real company.
-    """
-    mda_words = _word_count(mda_text)
-    total_words = mda_words + _word_count(risk_factors_text)
-
-    if mda_words >= MIN_WORDS_FOR_ANALYSIS:
-        hedging_score, hedging_words = compute_hedging_score(mda_text)
-        evasion_score = compute_evasion_score(mda_text)
-        sentiment, net_tone = compute_lexicon_tone(mda_text)
-        source = "lexicon"
-    else:
-        hedging_score, hedging_words, evasion_score = 0.0, [], 0.0
-        sentiment, net_tone, source = "unknown", None, None
-
-    score = demo_truth_score(ticker)
-    return ForensicResult(
-        truth_score=score,
-        truth_zone=truth_zone_for(score),
-        linguistic_analysis=LinguisticAnalysis(
-            hedging_score=hedging_score,
-            evasion_score=evasion_score,
-            sentiment=sentiment,
-            sentiment_confidence=0,
-            sentiment_source=source,
-            net_tone=net_tone,
-            hedging_words_found=hedging_words,
-            total_words_analyzed=total_words,
-        ),
-        z_score_result=z_score_result,
-        truth_score_breakdown=TruthScoreBreakdown(basis="demo"),
-        analysis_note=(
-            "Demo mode: the Truth Score is a simulated value, fixed per ticker, "
-            "to illustrate the feature. It is not an analysis result."
-        ),
-    )
-
-
 async def analyze_filing_text(
     mda_text: str,
     risk_factors_text: str,
@@ -639,6 +582,8 @@ async def run_forensic_pipeline(ticker: str) -> tuple[ForensicAuditResponse, Fin
         normalize_ticker,
     )
     from risk_engine import ZScoreNotApplicable, calculate_altman_z_score
+    from earnings_call import build_call_analysis, fetch_call_material, fetch_earnings_release
+    from truth_score import health_reading
 
     ticker = ticker.upper().strip()
     data_sources: list[str] = []
@@ -659,8 +604,15 @@ async def run_forensic_pipeline(ticker: str) -> tuple[ForensicAuditResponse, Fin
         except Exception as e:
             return None, e
 
-    company_name, (fin, fin_err), (sections, text_err) = await asyncio.gather(
-        get_company_name(ticker), _financials(), _sections(),
+    async def _call_material():
+        try:
+            # SEC press releases are US-only; transcripts cover any ticker Alpha Vantage knows
+            return await fetch_call_material(normalize_ticker(ticker), allow_sec=not international)
+        except Exception as e:
+            return {"error": f"Earnings call lookup failed: {str(e)[:120]}"}
+
+    company_name, (fin, fin_err), (sections, text_err), call_material = await asyncio.gather(
+        get_company_name(ticker), _financials(), _sections(), _call_material(),
     )
 
     # Z-Score
@@ -695,20 +647,41 @@ async def run_forensic_pipeline(ticker: str) -> tuple[ForensicAuditResponse, Fin
         detail = getattr(text_err, "detail", None) or str(text_err)
         data_sources.append(f"SEC EDGAR — Filing text unavailable: {str(detail)[:100]}")
 
-    mode = truth_score_mode()
-    if mode == "demo":
-        # Normalised so e.g. RELIANCE and RELIANCE.NS share one score
-        forensic_result = analyze_demo(normalize_ticker(ticker), mda_text, risk_factors_text, z_score_result)
-        ai_error = None
-        gemini_active = False
-        data_sources.append("Demo mode — simulated Truth Score (fixed per ticker); AI analysis disabled")
-    else:
-        forensic_result, ai_error = await analyze_filing_text(mda_text, risk_factors_text, z_score_result)
-        gemini_active = ai_error is None
-        if gemini_active:
-            data_sources.append(f"Google Gemini ({GEMINI_MODEL}) — AI Analysis")
-        elif forensic_result.truth_score is not None:
-            data_sources.append(f"Heuristic analysis only — {ai_error}")
+    # Financial health zone (Z-Score, or bank capital strength) for the call's tone check
+    health = health_reading(z_score_result, financial_data)
+    earnings_call = build_call_analysis(call_material, health[2] if health else None)
+    if earnings_call.available:
+        data_sources.append(earnings_call.source_label)
+
+    # Some 10-Ks (JPM, BAC, IBM, GE...) don't use the standard Item 7 layout. Their
+    # SEC earnings press release is management's own prose too, so use it instead.
+    language_source = "10-K MD&A"
+    if not international and _word_count(mda_text) < MIN_WORDS_FOR_ANALYSIS:
+        release = call_material.get("release")
+        if release is None:
+            try:
+                release, _ = await fetch_earnings_release(ticker)
+            except Exception:
+                release = None
+        if release and _word_count(release["text"]) >= MIN_WORDS_FOR_ANALYSIS:
+            mda_text = release["text"][:MAX_LANGUAGE_CHARS]
+            language_source = f"Earnings press release (SEC 8-K, {release['date']})"
+            data_sources.append(f"{language_source} — used for filing language (10-K MD&A not located)")
+
+    forensic_result, ai_error = await analyze_filing_text(mda_text, risk_factors_text, z_score_result)
+    if forensic_result.truth_score_breakdown is not None:
+        forensic_result.language_source = language_source
+    gemini_active = ai_error is None
+    if gemini_active:
+        data_sources.append(f"Google Gemini ({GEMINI_MODEL}) — AI Analysis")
+
+    apply_credibility_index(forensic_result, z_score_result, earnings_call, financial_data, gemini_active)
+
+    from conviction import compute_conviction
+    from risk_register import build_risk_register
+    conviction = compute_conviction(z_score_result, forensic_result, earnings_call, financial_data)
+    monte_carlo = company_stress_test(ticker, financial_data)
+    risk_register = build_risk_register(z_score_result, forensic_result, earnings_call, conviction, monte_carlo)
 
     response = ForensicAuditResponse(
         ticker=ticker,
@@ -718,9 +691,81 @@ async def run_forensic_pipeline(ticker: str) -> tuple[ForensicAuditResponse, Fin
         data_sources=data_sources,
         gemini_active=gemini_active,
         ai_error=ai_error,
-        truth_score_mode=mode,
+        earnings_call=earnings_call,
+        conviction=conviction,
+        financials=financial_data,
+        monte_carlo=monte_carlo,
+        risk_register=risk_register,
     )
     return response, financial_data
+
+
+def company_stress_test(
+    ticker: str,
+    financial_data: FinancialData | None,
+    num_simulations: int = 1000,
+    time_horizon_years: int = 5,
+):
+    """Monte Carlo revenue stress test using the company's own growth history.
+
+    Seeded from the ticker so the report page and the PDF show the same numbers.
+    """
+    from models import MonteCarloInput
+    from risk_engine import growth_parameters_from_history, run_monte_carlo_simulation
+
+    if financial_data is None or financial_data.revenue <= 0:
+        return None
+    drift, volatility, source = growth_parameters_from_history(financial_data.history)
+    seed = int.from_bytes(hashlib.sha256(ticker.upper().encode()).digest()[:4], "big")
+    return run_monte_carlo_simulation(MonteCarloInput(
+        ticker=ticker,
+        num_simulations=num_simulations,
+        time_horizon_years=time_horizon_years,
+        initial_revenue=financial_data.revenue,
+        revenue_growth_mean=drift,
+        revenue_growth_std=volatility,
+        seed=seed,
+        parameter_source=source,
+    ))
+
+
+def apply_credibility_index(
+    result: ForensicResult,
+    z_score_result: ZScoreResult | None,
+    earnings_call,
+    financial_data: FinancialData | None,
+    ai_used: bool,
+) -> None:
+    """Replace the filing-only score with the five-component Credibility Index (in place)."""
+    from truth_score import compute_credibility, coverage_note
+
+    score, zone, components, critical = compute_credibility(
+        z_score_result, result, earnings_call, financial_data,
+    )
+    filing = result.truth_score_breakdown
+    result.truth_score = score
+    result.truth_zone = zone
+    result.truth_score_breakdown = TruthScoreBreakdown(
+        components=components,
+        hedging_penalty=filing.hedging_penalty if filing else 0.0,
+        evasion_penalty=filing.evasion_penalty if filing else 0.0,
+        red_flag_penalty=filing.red_flag_penalty if filing else 0.0,
+        sentiment_gap_penalty=filing.sentiment_gap_penalty if filing else 0.0,
+        basis="ai+heuristic" if ai_used else "heuristic",
+    )
+
+    # An upbeat earnings call from a Distress-zone company is as serious as an upbeat filing
+    if critical and not result.deception_alert:
+        result.deception_alert = True
+        result.deception_reason = critical
+        result.red_flags.insert(0, RedFlag(
+            sentence=critical,
+            category="sentiment_gap",
+            severity=10,
+            explanation="Management narrative significantly diverges from quantitative financial reality.",
+        ))
+
+    result.analysis_note = coverage_note(components)
 
 
 # ──────────────────────────────────────────────

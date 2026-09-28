@@ -136,10 +136,20 @@ class TestFetchFromEdgar:
         data = await scraper.fetch_financial_data_from_edgar("TEST")
         assert data.market_cap is None
 
-    async def test_bank_is_rejected(self, monkeypatch):
-        self._patch(monkeypatch, _complete_facts(), sic="6021")
+    async def test_bank_data_is_collected_without_current_items(self, monkeypatch):
+        # Banks have no current/non-current split; data is still returned, and the
+        # Z-Score step (not the loader) refuses to score them.
+        facts = _complete_facts(
+            AssetsCurrent=[], LiabilitiesCurrent=[], OperatingIncomeLoss=[],
+            RevenuesNetOfInterestExpense=[_fact(500, FY24, start="2023-10-01")],
+        )
+        self._patch(monkeypatch, facts, sic="6021")
+        data = await scraper.fetch_financial_data_from_edgar("BANK")
+        assert data.current_assets is None and data.current_liabilities is None
+        assert data.revenue == 500   # total net revenue, not fee income only
+        from risk_engine import calculate_altman_z_score
         with pytest.raises(ZScoreNotApplicable):
-            await scraper.fetch_financial_data_from_edgar("BANK")
+            calculate_altman_z_score(data)
 
 
 class TestTickerMapCache:

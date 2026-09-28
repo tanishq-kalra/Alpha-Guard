@@ -8,7 +8,7 @@ const NAV_ITEMS = [
     { label: "Dashboard", href: "/" },
     { label: "Forensic", href: "/forensic" },
     { label: "Reports", href: "/reports" },
-    { label: "Architect", href: "/about" },
+    { label: "Team", href: "/about" },
 ];
 
 /** Polygraph / seismograph signature line — one-time decorative element,

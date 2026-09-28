@@ -16,11 +16,21 @@ export interface CompanyInfo {
     sector: string | null;
 }
 
+export interface HistoryPoint {
+    fiscal_period_end: string;
+    revenue: number | null;
+    net_income: number | null;
+    operating_cash_flow: number | null;
+    total_assets: number | null;
+    total_liabilities: number | null;
+}
+
 export interface FinancialData {
     ticker: string;
     total_assets: number;
-    current_assets: number;
-    current_liabilities: number;
+    /** null for banks/insurers, which have no current/non-current split */
+    current_assets: number | null;
+    current_liabilities: number | null;
     retained_earnings: number;
     ebit: number;
     market_cap: number | null;
@@ -30,6 +40,11 @@ export interface FinancialData {
     sector?: string | null;
     fiscal_period_end?: string | null;
     z_model?: "auto" | "original" | "z_double_prime";
+    net_income?: number | null;
+    operating_cash_flow?: number | null;
+    revenue_prior_year?: number | null;
+    /** Up to 5 fiscal years, newest first */
+    history?: HistoryPoint[];
 }
 
 export interface ZScoreComponents {
@@ -100,12 +115,24 @@ export interface LinguisticAnalysis {
     total_words_analyzed: number;
 }
 
+export interface TruthComponent {
+    key: "financial_health" | "filing_language" | "call_candor" | "narrative_consistency" | "earnings_quality";
+    label: string;
+    score: number;
+    /** Nominal weight */
+    weight: number;
+    /** Share of the final score after missing components are excluded */
+    effective_weight: number;
+    detail: string;
+}
+
 export interface TruthScoreBreakdown {
+    components: TruthComponent[];
     hedging_penalty: number;
     evasion_penalty: number;
     red_flag_penalty: number;
     sentiment_gap_penalty: number;
-    basis: "ai+heuristic" | "heuristic" | "demo";
+    basis: "ai+heuristic" | "heuristic";
 }
 
 export interface ForensicResult {
@@ -122,6 +149,75 @@ export interface ForensicResult {
     analysis_note: string | null;
 }
 
+export interface CallSegmentMetrics {
+    words: number;
+    hedging_score: number;
+    evasion_score: number;
+    sentiment: string;
+    net_tone: number | null;
+    provider_sentiment: number | null;
+}
+
+export interface CallExchange {
+    analyst: string;
+    question: string;
+    respondents: string[];
+    answer_excerpt: string;
+    answer_words: number;
+    deflection_phrase: string | null;
+    brief: boolean;
+}
+
+export interface EarningsCallAnalysis {
+    available: boolean;
+    source: "alpha_vantage" | "sec_8k" | null;
+    source_label: string | null;
+    quarter: string | null;
+    date: string | null;
+    url: string | null;
+    /** Scripted remarks, or the press release's commentary */
+    prepared: CallSegmentMetrics | null;
+    /** Executives' answers during analyst Q&A (transcripts only) */
+    qa: CallSegmentMetrics | null;
+    executives: string[];
+    analyst_questions: number;
+    deflection_rate: number | null;
+    tone_shift: number | null;
+    /** 0-100; null for press releases (no Q&A to measure) */
+    candor_score: number | null;
+    flags: string[];
+    exchanges: CallExchange[];
+    note: string | null;
+}
+
+export interface RiskItem {
+    severity: "high" | "medium" | "low";
+    area: string;
+    finding: string;
+}
+
+export interface ConvictionPillar {
+    key: "financial_strength" | "profitability" | "growth" | "credibility" | "valuation" | "earnings_quality";
+    label: string;
+    score: number;
+    weight: number;
+    effective_weight: number;
+    detail: string;
+    metric: string | null;
+}
+
+export interface InvestmentConviction {
+    /** 0-100, shown as a percentage; null when there is too little data */
+    score: number | null;
+    verdict: "High conviction" | "Moderate conviction" | "Neutral — watch" | "Low conviction" | null;
+    headline: string;
+    pillars: ConvictionPillar[];
+    strengths: string[];
+    concerns: string[];
+    capped_reason: string | null;
+    disclaimer: string;
+}
+
 export interface ForensicAuditResponse {
     ticker: string;
     company_name: string | null;
@@ -130,8 +226,11 @@ export interface ForensicAuditResponse {
     data_sources: string[];
     gemini_active: boolean;
     ai_error: string | null;
-    /** "demo" = simulated Truth Score, fixed per ticker (not an analysis result) */
-    truth_score_mode?: "demo" | "computed";
+    earnings_call?: EarningsCallAnalysis | null;
+    conviction?: InvestmentConviction | null;
+    financials?: FinancialData | null;
+    monte_carlo?: MonteCarloResult | null;
+    risk_register?: RiskItem[];
 }
 
 export interface HealthCheck {
@@ -229,6 +328,9 @@ export interface MonteCarloResult {
     initial_revenue: number | null;
     histogram: { range: string; count: number; pct: number; midpoint: number }[];
     sample_paths: { year: number; p5: number; p25: number; median: number; p75: number; p95: number; mean: number }[];
+    growth_mean?: number | null;
+    growth_std?: number | null;
+    parameter_source?: string | null;
 }
 
 export async function runMonteCarlo(params: MonteCarloInput): Promise<MonteCarloResult> {

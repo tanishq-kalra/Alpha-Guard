@@ -88,8 +88,11 @@ def test_forensic_audit_without_ai_is_honest(monkeypatch):
     assert body["gemini_active"] is False
     assert "GEMINI_API_KEY" in body["ai_error"]
     f = body["forensic"]
-    assert f["truth_score"] == 100
+    # Financial health 91 (Z 5.08, Safe) x 0.6 + filing language 100 x 0.4
+    assert f["truth_score"] == 95
     assert f["truth_score_breakdown"]["basis"] == "heuristic"
+    keys = [c["key"] for c in f["truth_score_breakdown"]["components"]]
+    assert keys == ["financial_health", "filing_language"]
     assert f["z_score_result"]["model"] == "original"
 
 
@@ -106,12 +109,32 @@ def test_forensic_audit_with_ai(monkeypatch):
     assert body["forensic"]["truth_score_breakdown"]["basis"] == "ai+heuristic"
 
 
-def test_forensic_audit_without_text_has_no_score(monkeypatch):
+def test_forensic_audit_without_text_is_limited_evidence(monkeypatch):
     _stub_sources(monkeypatch, mda="")
     body = client.post("/api/risk/forensic-audit", json={"ticker": "TEST"}).json()
-    assert body["forensic"]["truth_score"] is None
+    f = body["forensic"]
+    # Only financial health (Z 5.08 -> 91) is available
+    assert f["truth_score"] == 91
+    assert [c["key"] for c in f["truth_score_breakdown"]["components"]] == ["financial_health"]
+    assert f["analysis_note"].startswith("Limited evidence")
     assert body["gemini_active"] is False
-    assert body["forensic"]["analysis_note"]
+
+
+def test_press_release_used_when_mda_missing(monkeypatch):
+    import earnings_call
+    _stub_sources(monkeypatch, mda="")
+
+    async def release(ticker):
+        return {"source": "sec_8k", "date": "2026-07-14", "url": "u",
+                "text": "Revenue increased twelve percent driven by higher unit sales in every region. " * 40}, None
+
+    monkeypatch.setattr(earnings_call, "fetch_earnings_release", release)
+    body = client.post("/api/risk/forensic-audit", json={"ticker": "TEST"}).json()
+    f = body["forensic"]
+    assert f["language_source"] == "Earnings press release (SEC 8-K, 2026-07-14)"
+    keys = [c["key"] for c in f["truth_score_breakdown"]["components"]]
+    assert keys == ["financial_health", "filing_language"]
+    assert any("used for filing language" in s for s in body["data_sources"])
 
 
 def test_forensic_audit_notes_bank(monkeypatch):
@@ -155,3 +178,42 @@ def test_monte_carlo_endpoint():
     resp = client.post("/api/risk/monte-carlo", json={"ticker": "T", "num_simulations": 500, "seed": 1})
     assert resp.status_code == 200
     assert resp.json()["num_simulations"] == 500
+
+
+def test_forensic_audit_includes_earnings_call(monkeypatch):
+    import earnings_call
+    _stub_sources(monkeypatch)
+    turns = [
+        {"speaker": "Alex", "title": "CEO", "content": "Strong record growth and excellent margins. " * 40, "sentiment": 0.8},
+        {"speaker": "Operator", "title": "Operator", "content": "First question."},
+        {"speaker": "Pat", "title": "Analyst", "content": "What about margins?"},
+        {"speaker": "Alex", "title": "CEO", "content": "We don't break out margins by segment, but trends are good. " * 5, "sentiment": 0.4},
+    ]
+
+    async def material(ticker, allow_sec=True):
+        return {"transcript": {"source": "alpha_vantage", "quarter": "2026Q2", "turns": turns}}
+
+    monkeypatch.setattr(earnings_call, "fetch_call_material", material)
+    body = client.post("/api/risk/forensic-audit", json={"ticker": "TEST"}).json()
+    call = body["earnings_call"]
+    assert call["available"] and call["quarter"] == "2026Q2"
+    assert call["analyst_questions"] == 1 and call["deflection_rate"] == 1.0
+    assert call["exchanges"][0]["deflection_phrase"] == "we don't break out"
+    assert any("Earnings call transcript" in s for s in body["data_sources"])
+
+
+def test_pdf_includes_earnings_call(monkeypatch):
+    import earnings_call
+    _stub_sources(monkeypatch)
+    turns = [
+        {"speaker": "Alex", "title": "CEO", "content": "Strong record growth & <excellent> margins. " * 40},
+        {"speaker": "Pat", "title": "Analyst", "content": "Margins?"},
+        {"speaker": "Alex", "title": "CEO", "content": "We don't break out margins <by segment>."},
+    ]
+
+    async def material(ticker, allow_sec=True):
+        return {"transcript": {"source": "alpha_vantage", "quarter": "2026Q2", "turns": turns}}
+
+    monkeypatch.setattr(earnings_call, "fetch_call_material", material)
+    resp = client.post("/api/reports/generate-pdf", json={"ticker": "TEST"})
+    assert resp.status_code == 200 and resp.content.startswith(b"%PDF")

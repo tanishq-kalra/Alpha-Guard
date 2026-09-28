@@ -6,6 +6,8 @@ import TickerSearch from "@/components/TickerSearch";
 import TruthScoreGauge from "@/components/TruthScoreGauge";
 import RiskRadar from "@/components/RiskRadar";
 import RedFlagTerminal from "@/components/RedFlagTerminal";
+import EarningsCallPanel from "@/components/EarningsCallPanel";
+import TruthBreakdown from "@/components/TruthBreakdown";
 import ApiKeyBanner from "@/components/ApiKeyBanner";
 import { AnimatedSection, FadeTransition } from "@/components/AnimatedSection";
 import { runForensicAudit, checkConfigStatus, type ForensicAuditResponse, type RedFlag } from "@/lib/api";
@@ -129,18 +131,6 @@ export default function ForensicPage() {
                     </AnimatedSection>
                 )}
 
-                {/* ── AI Offline ── */}
-                {auditResult && !auditResult.gemini_active && auditResult.truth_score_mode !== "demo" && !isLoading && (
-                    <AnimatedSection className="mb-6">
-                        <div style={{ background: "var(--amber-tint)", borderLeft: "4px solid var(--amber)", borderRadius: "0 4px 4px 0", padding: "12px 16px" }}>
-                            <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--amber)", marginBottom: 3 }}>AI Analyst Offline</p>
-                            <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 13, color: "var(--ink-2)" }}>
-                                {auditResult.ai_error ?? "Reverting to heuristic models."}
-                            </p>
-                        </div>
-                    </AnimatedSection>
-                )}
-
                 {/* ── Loading ── */}
                 {isLoading && (
                     <AnimatedSection className="mb-10">
@@ -153,7 +143,7 @@ export default function ForensicPage() {
                                 Running forensic analysis on {ticker}...
                             </p>
                             <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)", marginTop: 6 }}>
-                                Fetching 10-K filing · Computing Z-Score · Analyzing narrative
+                                Fetching 10-K filing · Earnings call · Computing Z-Score · Analyzing narrative
                             </p>
                         </div>
                     </AnimatedSection>
@@ -195,35 +185,22 @@ export default function ForensicPage() {
                                         deceptionAlert={f.deception_alert}
                                         deceptionReason={f.deception_reason ?? undefined}
                                         aiConfidenceScore={f.ai_confidence_score}
-                                        isDemo={auditResult?.truth_score_mode === "demo"}
                                     />
-                                    {(f.truth_score_breakdown || f.analysis_note) && (
-                                        <div style={{ marginTop: 8, padding: "10px 14px", background: "var(--paper-2)", border: "1px solid var(--rule)", borderRadius: 4 }}>
-                                            {f.truth_score_breakdown && f.truth_score_breakdown.basis !== "demo" && (
-                                                <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, color: "var(--ink-2)", lineHeight: 1.6 }}>
-                                                    100 − hedging {f.truth_score_breakdown.hedging_penalty}
-                                                    {" "}− evasion {f.truth_score_breakdown.evasion_penalty}
-                                                    {" "}− red flags {f.truth_score_breakdown.red_flag_penalty}
-                                                    {" "}− sentiment gap {f.truth_score_breakdown.sentiment_gap_penalty}
-                                                    <br />
-                                                    <span style={{ color: "var(--ink-faint)" }}>
-                                                        Basis: {f.truth_score_breakdown.basis === "heuristic" ? "lexicon heuristics only" : "Gemini + lexicon heuristics"}
-                                                        {la?.net_tone != null && ` · Net tone ${la.net_tone > 0 ? "+" : ""}${la.net_tone.toFixed(2)}`}
-                                                    </span>
-                                                </p>
-                                            )}
-                                            {f.analysis_note && (
-                                                <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 11, color: "var(--ink-faint)", marginTop: f.truth_score_breakdown ? 6 : 0 }}>
-                                                    {f.analysis_note}
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
                                 </AnimatedSection>
                                 <AnimatedSection delay={0.1} className="lg:col-span-2">
                                     <RiskRadar data={radarData} />
                                 </AnimatedSection>
                             </section>
+
+                            {/* Truth Score breakdown */}
+                            <AnimatedSection delay={0.12} className="mb-6">
+                                <TruthBreakdown
+                                    breakdown={f.truth_score_breakdown}
+                                    score={f.truth_score}
+                                    note={f.analysis_note}
+                                    aiNote={auditResult?.gemini_active ? null : auditResult?.ai_error}
+                                />
+                            </AnimatedSection>
 
                             {/* Forensic Metrics Row — connected border grid */}
                             <section style={{ marginBottom: 24 }}>
@@ -256,6 +233,11 @@ export default function ForensicPage() {
                                     ))}
                                 </div>
                             </section>
+
+                            {/* Earnings Conference Call */}
+                            <AnimatedSection delay={0.25} className="mb-6">
+                                <EarningsCallPanel call={auditResult?.earnings_call} />
+                            </AnimatedSection>
 
                             {/* Red Flag Evidence Log */}
                             <AnimatedSection delay={0.3} className="mb-8">
@@ -306,11 +288,12 @@ export default function ForensicPage() {
                                     Analysis Methodology
                                 </h3>
                             </div>
-                            <div style={{ padding: 20, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }} className="grid-cols-1 md:grid-cols-3">
+                            <div style={{ padding: 20, display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }} className="grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
                                 {[
-                                    { title: "Hedging Detection", desc: "Scans Item 1A for hedging words like 'uncertain,' 'might,' 'potentially.' Computes density score normalized against filing length." },
-                                    { title: "Sentiment Gap Analysis", desc: "Compares Gemini AI's sentiment classification of MD&A narrative against the quantitative Z-Score zone. Divergence triggers Deception Alert." },
-                                    { title: "Truth Score Formula", desc: "100 − hedging_penalty(25%) − evasion_penalty(15%) − sentiment_gap(40%) − red_flag_penalty(20%). Score ≥70 = Credible, <40 = Deceptive." },
+                                    { title: "Hedging Detection", desc: "Scans the 10-K MD&A for hedging words like 'uncertain,' 'might,' 'potentially' (whole words only). Density above normal filing levels is penalised." },
+                                    { title: "Sentiment Gap Analysis", desc: "Compares management's tone (financial word lexicon, or Gemini when available) with the Z-Score zone. An upbeat narrative from a distressed company triggers a Deception Alert." },
+                                    { title: "Earnings Call Candor", desc: "Splits the latest conference call into scripted remarks and analyst Q&A. Refusals to answer and a tone drop from script to Q&A lower the Call Candor Score (Larcker & Zakolyukina, 2012)." },
+                                    { title: "Truth Score (Credibility Index)", desc: "Weighted evidence: financial health 30%, filing language 20%, earnings-call candor 20%, narrative consistency 15%, earnings quality (cash vs accruals) 15%. ≥70 Credible · 40–69 Suspicious · <40 Deceptive." },
                                 ].map((method) => (
                                     <div
                                         key={method.title}
@@ -332,7 +315,7 @@ export default function ForensicPage() {
 
             <footer style={{ borderTop: "1px solid var(--rule)", padding: "14px 24px" }}>
                 <div style={{ maxWidth: 1480, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>ALPHA-GUARD v0.3.0 · Forensic AI Intelligence Layer</p>
+                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>ALPHA-GUARD v0.5.0 · Forensic AI Intelligence Layer</p>
                     <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>Powered by Google Gemini · FastAPI · SEC EDGAR · Yahoo Finance</p>
                 </div>
             </footer>

@@ -142,6 +142,8 @@ def calculate_altman_z_score(data: FinancialData) -> ZScoreResult:
         raise ValueError("Total liabilities must be positive for Z-Score calculation.")
 
     model = select_z_model(data)
+    if data.current_assets is None or data.current_liabilities is None:
+        raise ValueError("Current assets and current liabilities are required for the Z-Score.")
     spec = Z_MODELS[model]
     weights = spec["weights"]
 
@@ -202,6 +204,44 @@ def _format_money_range(low: float, high: float) -> str:
     if top >= 1e6:
         return f"${low / 1e6:.0f}M-${high / 1e6:.0f}M"
     return f"${low:,.0f}-${high:,.0f}"
+
+
+DEFAULT_GROWTH_MEAN = 0.05
+DEFAULT_GROWTH_STD = 0.15
+# Keep estimates from a handful of years inside plausible bounds
+GROWTH_MEAN_BOUNDS = (-0.25, 0.35)
+GROWTH_STD_BOUNDS = (0.05, 0.50)
+
+
+def growth_parameters_from_history(history: list) -> tuple[float, float, str]:
+    """GBM drift and volatility from a company's annual revenue history.
+
+    Uses annual log growth g_t = ln(R_t / R_{t-1}). Volatility is the sample
+    standard deviation of g; the GBM drift is mean(g) + σ²/2, so the median
+    simulated path grows at the company's historical rate.
+
+    Returns (drift, volatility, description of the source).
+    """
+    points = [(h.fiscal_period_end, h.revenue) for h in history if h.revenue and h.revenue > 0]
+    points.sort()  # oldest first
+    growth = [float(np.log(b / a)) for (_, a), (_, b) in zip(points, points[1:])]
+    if not growth:
+        return DEFAULT_GROWTH_MEAN, DEFAULT_GROWTH_STD, (
+            f"Default assumptions ({DEFAULT_GROWTH_MEAN:.0%} growth, {DEFAULT_GROWTH_STD:.0%} volatility) — "
+            "not enough revenue history"
+        )
+
+    lo, hi = GROWTH_STD_BOUNDS
+    sigma = float(np.std(growth, ddof=1)) if len(growth) > 1 else DEFAULT_GROWTH_STD
+    sigma = min(hi, max(lo, sigma))
+    lo, hi = GROWTH_MEAN_BOUNDS
+    mean_log = min(hi, max(lo, float(np.mean(growth))))
+    drift = mean_log + 0.5 * sigma ** 2
+    years = f"FY{points[0][0][:4]}–FY{points[-1][0][:4]}"
+    return drift, sigma, (
+        f"Company history: {len(points)} years of revenue ({years}), "
+        f"{np.exp(mean_log) - 1:+.1%} average growth, {sigma:.1%} volatility"
+    )
 
 
 def run_monte_carlo_simulation(params: MonteCarloInput) -> MonteCarloResult:
@@ -278,6 +318,9 @@ def run_monte_carlo_simulation(params: MonteCarloInput) -> MonteCarloResult:
         histogram=histogram,
         sample_paths=sample_paths,
         initial_revenue=initial_revenue,
+        growth_mean=round(mu, 4),
+        growth_std=round(sigma, 4),
+        parameter_source=params.parameter_source,
     )
 
 

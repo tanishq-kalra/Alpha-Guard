@@ -168,7 +168,7 @@ export default function DashboardPage() {
               overflow: "hidden",
             }}>
               {[
-                { label: "Platform", value: "Alpha-Guard v0.4" },
+                { label: "Platform", value: "Alpha-Guard v0.5" },
                 { label: "Coverage", value: "SEC EDGAR · NYSE · BSE" },
                 { label: "Model", value: "Altman Z / Z'' (auto)" },
               ].map((item, i) => (
@@ -446,7 +446,7 @@ export default function DashboardPage() {
       <footer style={{ borderTop: "1px solid var(--rule)", padding: "14px 24px" }}>
         <div style={{ maxWidth: 1480, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>
-            ALPHA-GUARD v0.3.0 · Forensic Credit Risk Platform
+            ALPHA-GUARD v0.5.0 · Forensic Credit Risk Platform
           </p>
           <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)" }}>
             FastAPI · Next.js · SEC EDGAR · Yahoo Finance · Google Gemini
