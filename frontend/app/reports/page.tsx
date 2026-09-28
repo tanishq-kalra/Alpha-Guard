@@ -5,10 +5,9 @@ import DashboardHeader from "@/components/DashboardHeader";
 import TickerSearch from "@/components/TickerSearch";
 import { AnimatedSection, FadeTransition } from "@/components/AnimatedSection";
 import {
-    fetchFinancials,
-    calculateZScore,
-    fetchCompanyInfo,
     runForensicAudit,
+    zScoreComponentRows,
+    API_BASE,
     type ZScoreResult,
     type ForensicAuditResponse,
 } from "@/lib/api";
@@ -32,23 +31,14 @@ export default function ReportsPage() {
         setError(null);
 
         try {
-            const [financials, forensicResult] = await Promise.allSettled([
-                fetchFinancials(ticker).then((fin) => calculateZScore(fin)),
-                runForensicAudit(ticker),
-            ]);
-
-            let companyName = ticker;
-            try {
-                const info = await fetchCompanyInfo(ticker);
-                companyName = info.name || ticker;
-            } catch { /* optional */ }
-
+            // The audit already computes the Z-Score and resolves the company name
+            const audit = await runForensicAudit(ticker);
             setReport({
-                ticker: ticker.toUpperCase(),
-                companyName,
-                timestamp: new Date().toISOString(),
-                zScore: financials.status === "fulfilled" ? financials.value : null,
-                forensic: forensicResult.status === "fulfilled" ? forensicResult.value : null,
+                ticker: audit.ticker,
+                companyName: audit.company_name || audit.ticker,
+                timestamp: audit.timestamp,
+                zScore: audit.forensic.z_score_result,
+                forensic: audit,
             });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Report generation failed.");
@@ -136,11 +126,12 @@ export default function ReportsPage() {
                                     id="report-download-pdf"
                                     onClick={async () => {
                                         try {
-                                            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/reports/generate-pdf`, {
+                                            const res = await fetch(`${API_BASE}/api/reports/generate-pdf`, {
                                                 method: "POST",
                                                 headers: { "Content-Type": "application/json" },
                                                 body: JSON.stringify({ ticker: report.ticker }),
                                             });
+                                            if (res.status === 429) throw new Error("Rate limit reached — please wait a minute and try again.");
                                             if (!res.ok) throw new Error("PDF generation failed");
                                             const blob = await res.blob();
                                             const url = URL.createObjectURL(blob);
@@ -149,8 +140,10 @@ export default function ReportsPage() {
                                             a.download = `AlphaGuard_${report.ticker}_Report.pdf`;
                                             a.click();
                                             URL.revokeObjectURL(url);
-                                        } catch {
-                                            alert("PDF generation failed. Is the backend running?");
+                                        } catch (err) {
+                                            alert(err instanceof Error && err.message !== "Failed to fetch"
+                                                ? err.message
+                                                : "PDF generation failed. Is the backend running?");
                                         }
                                     }}
                                     style={{
@@ -279,13 +272,7 @@ export default function ReportsPage() {
                                                         </tr>
                                                     </thead>
                                                     <tbody style={{ color: "var(--ink-2)" }}>
-                                                        {[
-                                                            { label: "X1 — Working Capital / Assets", val: z.components.x1_working_capital_to_total_assets, w: 1.2 },
-                                                            { label: "X2 — Retained Earnings / Assets", val: z.components.x2_retained_earnings_to_total_assets, w: 1.4 },
-                                                            { label: "X3 — EBIT / Assets", val: z.components.x3_ebit_to_total_assets, w: 3.3 },
-                                                            { label: "X4 — Market Cap / Liabilities", val: z.components.x4_market_cap_to_total_liabilities, w: 0.6 },
-                                                            { label: "X5 — Revenue / Assets", val: z.components.x5_revenue_to_total_assets, w: 1.0 },
-                                                        ].map((c) => (
+                                                        {zScoreComponentRows(z).map((r) => ({ label: r.label, val: r.value, w: r.weight })).map((c) => (
                                                             <tr key={c.label} style={{ borderTop: "1px solid var(--rule)" }}>
                                                                 <td style={{ padding: "6px 0" }}>{c.label}</td>
                                                                 <td style={{ padding: "6px 0", textAlign: "right" }}>{c.val.toFixed(4)}</td>
@@ -300,11 +287,17 @@ export default function ReportsPage() {
                                                         {z.interpretation}
                                                     </p>
                                                 )}
+                                                {z?.model_label && (
+                                                    <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 9, color: "var(--ink-faint)", marginTop: 6 }}>
+                                                        Model: {z.model_label}
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                     ) : (
                                         <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 12, color: "var(--ink-faint)" }}>
-                                            Z-Score data unavailable for this ticker.
+                                            {report.forensic?.data_sources.find((s) => s.startsWith("Z-Score not computed") || s.startsWith("Financial data unavailable"))
+                                                ?? "Z-Score data unavailable for this ticker."}
                                         </p>
                                     )}
                                 </div>
@@ -320,10 +313,12 @@ export default function ReportsPage() {
                                             {/* Key Metrics */}
                                             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 0, border: "1px solid var(--rule)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
                                                 {[
-                                                    { label: "Truth Score", value: String(f.truth_score), sub: f.truth_zone, color: f.truth_score >= 70 ? "var(--green)" : f.truth_score >= 40 ? "var(--amber)" : "var(--red)" },
-                                                    { label: "Hedging", value: f.linguistic_analysis.hedging_score.toFixed(1), sub: "%", color: "var(--ink)" },
+                                                    f.truth_score === null
+                                                        ? { label: "Truth Score", value: "N/A", sub: "insufficient text", color: "var(--ink-faint)" }
+                                                        : { label: "Truth Score", value: String(f.truth_score), sub: `${f.truth_zone ?? ""}${f.truth_score_breakdown?.basis === "demo" ? " (demo)" : ""}`, color: f.truth_score >= 70 ? "var(--green)" : f.truth_score >= 40 ? "var(--amber)" : "var(--red)" },
+                                                    { label: "Hedging", value: f.linguistic_analysis.hedging_score.toFixed(1), sub: "score", color: "var(--ink)" },
                                                     { label: "Evasion", value: f.linguistic_analysis.evasion_score.toFixed(1), sub: "score", color: "var(--ink)" },
-                                                    { label: "Sentiment", value: f.linguistic_analysis.sentiment.toUpperCase(), sub: "", color: f.linguistic_analysis.sentiment === "bullish" ? "var(--green)" : f.linguistic_analysis.sentiment === "bearish" ? "var(--red)" : "var(--amber)" },
+                                                    { label: "Sentiment", value: f.linguistic_analysis.sentiment.toUpperCase(), sub: f.linguistic_analysis.sentiment_source === "lexicon" ? "lexicon tone" : f.linguistic_analysis.sentiment_source === "ai" ? "Gemini" : "", color: f.linguistic_analysis.sentiment === "bullish" ? "var(--green)" : f.linguistic_analysis.sentiment === "bearish" ? "var(--red)" : "var(--amber)" },
                                                 ].map((item, i, arr) => (
                                                     <div key={item.label} style={{ padding: "14px 16px", textAlign: "center", background: "var(--paper)", borderRight: i < arr.length - 1 ? "1px solid var(--rule)" : "none" }}>
                                                         <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 8, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-faint)", marginBottom: 4 }}>{item.label}</p>
@@ -332,6 +327,30 @@ export default function ReportsPage() {
                                                     </div>
                                                 ))}
                                             </div>
+
+                                            {/* How the Truth Score was derived */}
+                                            {(f.truth_score_breakdown || f.analysis_note || report.forensic?.ai_error) && (
+                                                <div style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, color: "var(--ink-2)", lineHeight: 1.6, marginBottom: 20 }}>
+                                                    {f.truth_score_breakdown?.basis === "demo" && (
+                                                        <p style={{ color: "var(--amber)" }}>
+                                                            DEMO SCORE — simulated value, fixed per ticker; not an analysis result.
+                                                        </p>
+                                                    )}
+                                                    {f.truth_score_breakdown && f.truth_score_breakdown.basis !== "demo" && (
+                                                        <p>
+                                                            Truth Score = 100 − hedging {f.truth_score_breakdown.hedging_penalty}
+                                                            {" "}− evasion {f.truth_score_breakdown.evasion_penalty}
+                                                            {" "}− red flags {f.truth_score_breakdown.red_flag_penalty}
+                                                            {" "}− sentiment gap {f.truth_score_breakdown.sentiment_gap_penalty}
+                                                            {" "}({f.truth_score_breakdown.basis === "heuristic" ? "heuristics only" : "Gemini + heuristics"})
+                                                        </p>
+                                                    )}
+                                                    {f.analysis_note && <p style={{ color: "var(--ink-faint)" }}>{f.analysis_note}</p>}
+                                                    {report.forensic?.ai_error && !report.forensic.gemini_active && (
+                                                        <p style={{ color: "var(--amber)" }}>AI: {report.forensic.ai_error}</p>
+                                                    )}
+                                                </div>
+                                            )}
 
                                             {/* Deception Alert */}
                                             {f.deception_alert && f.deception_reason && (

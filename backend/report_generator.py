@@ -7,10 +7,15 @@ Compiles Z-Score, Forensic AI, and Monte Carlo results.
 
 import io
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from xml.sax.saxutils import escape
 
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from config import VERSION
 from models import ZScoreResult, MonteCarloResult
+from security import rate_limit
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -110,6 +115,8 @@ def generate_pdf_report(
     z_score: ZScoreResult | None = None,
     forensic_data: dict | None = None,
     monte_carlo: MonteCarloResult | None = None,
+    data_sources: list[str] | None = None,
+    z_score_note: str | None = None,
 ) -> bytes:
     """Generate a PDF report and return it as bytes."""
     buffer = io.BytesIO()
@@ -128,7 +135,7 @@ def generate_pdf_report(
     # ─── Header ───
     story.append(Paragraph("ALPHA-GUARD", styles["AG_Title"]))
     story.append(Paragraph(
-        f"Executive Risk Report — {ticker} ({company_name})",
+        escape(f"Executive Risk Report — {ticker} ({company_name})"),
         styles["AG_Subtitle"],
     ))
     story.append(Paragraph(
@@ -154,14 +161,23 @@ def generate_pdf_report(
         ))
         story.append(Spacer(1, 8))
 
-        # Components table
-        comp_data = [
-            ["Component", "Ratio", "Weight", "Weighted"],
-            ["X1 — Working Capital / Assets", f"{z_score.components.x1_working_capital_to_total_assets:.4f}", "×1.2", f"{z_score.components.x1_working_capital_to_total_assets * 1.2:.4f}"],
-            ["X2 — Retained Earnings / Assets", f"{z_score.components.x2_retained_earnings_to_total_assets:.4f}", "×1.4", f"{z_score.components.x2_retained_earnings_to_total_assets * 1.4:.4f}"],
-            ["X3 — EBIT / Assets", f"{z_score.components.x3_ebit_to_total_assets:.4f}", "×3.3", f"{z_score.components.x3_ebit_to_total_assets * 3.3:.4f}"],
-            ["X4 — Market Cap / Liabilities", f"{z_score.components.x4_market_cap_to_total_liabilities:.4f}", "×0.6", f"{z_score.components.x4_market_cap_to_total_liabilities * 0.6:.4f}"],
-            ["X5 — Revenue / Assets", f"{z_score.components.x5_revenue_to_total_assets:.4f}", "×1.0", f"{z_score.components.x5_revenue_to_total_assets * 1.0:.4f}"],
+        story.append(Paragraph(escape(z_score.model_label), styles["AG_Subtitle"]))
+
+        # Components table — weights come from the model actually used
+        c = z_score.components
+        w = z_score.weights or {"x1": 1.2, "x2": 1.4, "x3": 3.3, "x4": 0.6, "x5": 1.0}
+        x4_label = "X4 — Market Cap / Liabilities" if z_score.x4_basis == "market" else "X4 — Book Equity / Liabilities"
+        rows = [
+            ("X1 — Working Capital / Assets", c.x1_working_capital_to_total_assets, w["x1"]),
+            ("X2 — Retained Earnings / Assets", c.x2_retained_earnings_to_total_assets, w["x2"]),
+            ("X3 — EBIT / Assets", c.x3_ebit_to_total_assets, w["x3"]),
+            (x4_label, c.x4_market_cap_to_total_liabilities, w["x4"]),
+            ("X5 — Revenue / Assets", c.x5_revenue_to_total_assets, w["x5"]),
+        ]
+        comp_data = [["Component", "Ratio", "Weight", "Weighted"]] + [
+            [label, f"{val:.4f}", f"×{weight:g}", f"{val * weight:.4f}"]
+            for label, val, weight in rows
+            if weight
         ]
 
         comp_table = Table(comp_data, colWidths=[3 * inch, 1.1 * inch, 0.8 * inch, 1.1 * inch])
@@ -179,9 +195,9 @@ def generate_pdf_report(
         ]))
         story.append(comp_table)
         story.append(Spacer(1, 8))
-        story.append(Paragraph(z_score.interpretation, styles["AG_Body"]))
+        story.append(Paragraph(escape(z_score.interpretation), styles["AG_Body"]))
     else:
-        story.append(Paragraph("Z-Score data unavailable for this ticker.", styles["AG_Body"]))
+        story.append(Paragraph(escape(z_score_note or "Z-Score data unavailable for this ticker."), styles["AG_Body"]))
 
     story.append(Spacer(1, 12))
 
@@ -189,12 +205,31 @@ def generate_pdf_report(
     story.append(Paragraph("2. FORENSIC AI ANALYSIS", styles["AG_SectionHeader"]))
     if forensic_data:
         f = forensic_data
-        truth_color = _zone_color("Safe" if f.get("truth_score", 0) >= 70 else "Distress" if f.get("truth_score", 0) < 40 else "Gray")
-        story.append(Paragraph(
-            f'Truth Score: <font color="#{truth_color.hexval()[2:]}"><b>{f.get("truth_score", "N/A")}</b></font> '
-            f'— {f.get("truth_zone", "Unknown")}',
-            styles["AG_Body"],
-        ))
+        truth = f.get("truth_score")
+        if truth is None:
+            story.append(Paragraph("Truth Score: <b>N/A</b>", styles["AG_Body"]))
+        else:
+            truth_color = _zone_color("Safe" if truth >= 70 else "Distress" if truth < 40 else "Gray")
+            story.append(Paragraph(
+                f'Truth Score: <font color="#{truth_color.hexval()[2:]}"><b>{truth}</b></font> '
+                f'— {escape(f.get("truth_zone") or "Unknown")}',
+                styles["AG_Body"],
+            ))
+            breakdown = f.get("truth_score_breakdown") or {}
+            if breakdown.get("basis") == "demo":
+                story.append(Paragraph(
+                    "DEMO SCORE — simulated value, fixed per ticker; not an analysis result.",
+                    styles["AG_Subtitle"],
+                ))
+            elif breakdown:
+                story.append(Paragraph(
+                    f"100 − hedging {breakdown.get('hedging_penalty', 0):g} − evasion {breakdown.get('evasion_penalty', 0):g} "
+                    f"− red flags {breakdown.get('red_flag_penalty', 0):g} − sentiment gap {breakdown.get('sentiment_gap_penalty', 0):g} "
+                    f"(basis: {escape(breakdown.get('basis', ''))})",
+                    styles["AG_Subtitle"],
+                ))
+        if f.get("analysis_note"):
+            story.append(Paragraph(escape(f["analysis_note"]), styles["AG_Subtitle"]))
 
         la = f.get("linguistic_analysis", {})
         if la:
@@ -202,7 +237,7 @@ def generate_pdf_report(
                 ["Metric", "Value"],
                 ["Hedging Score", f"{la.get('hedging_score', 0):.1f}"],
                 ["Evasion Score", f"{la.get('evasion_score', 0):.1f}"],
-                ["Sentiment", la.get("sentiment", "N/A").upper()],
+                ["Sentiment", (la.get("sentiment") or "N/A").upper()],
                 ["Confidence", f"{la.get('sentiment_confidence', 0):.0%}"],
                 ["Words Analyzed", f"{la.get('total_words_analyzed', 0):,}"],
             ]
@@ -223,7 +258,7 @@ def generate_pdf_report(
         if f.get("deception_alert"):
             story.append(Spacer(1, 8))
             story.append(Paragraph(
-                f'⚠ DECEPTION ALERT: {f.get("deception_reason", "")}',
+                f'DECEPTION ALERT: {escape(f.get("deception_reason") or "")}',
                 ParagraphStyle(
                     "alert", parent=styles["AG_Body"],
                     textColor=BRAND_RED, fontName="Helvetica-Bold", fontSize=9,
@@ -235,13 +270,17 @@ def generate_pdf_report(
         if red_flags:
             story.append(Spacer(1, 8))
             story.append(Paragraph(f"Red Flags ({len(red_flags)})", styles["AG_Body"]))
+            cell_style = ParagraphStyle("flag_cell", parent=styles["AG_Body"], fontSize=7, leading=9)
             flag_data = [["#", "Severity", "Category", "Explanation"]]
             for i, flag in enumerate(red_flags[:10], 1):
+                category = flag.get("category", "")
+                if flag.get("verified") is False:
+                    category += " (unverified quote)"
                 flag_data.append([
                     str(i),
                     str(flag.get("severity", "?")),
-                    flag.get("category", ""),
-                    flag.get("explanation", "")[:80],
+                    Paragraph(escape(category), cell_style),
+                    Paragraph(escape(flag.get("explanation", "")[:300]), cell_style),
                 ])
             flag_table = Table(flag_data, colWidths=[0.3 * inch, 0.6 * inch, 1 * inch, 4 * inch])
             flag_table.setStyle(TableStyle([
@@ -297,11 +336,11 @@ def generate_pdf_report(
     story.append(Spacer(1, 30))
     story.append(HRFlowable(width="100%", thickness=0.5, color=BRAND_GRAY, spaceAfter=6))
     story.append(Paragraph(
-        "ALPHA-GUARD v0.2.0 · Confidential · Generated by Alpha-Guard Forensic Credit Risk Platform",
+        f"ALPHA-GUARD v{VERSION} · Confidential · Generated by Alpha-Guard Forensic Credit Risk Platform",
         styles["AG_Footer"],
     ))
     story.append(Paragraph(
-        "Data sources: SEC EDGAR · Google Gemini AI · Monte Carlo GBM Simulation",
+        escape("Data sources: " + (" · ".join(data_sources) if data_sources else "n/a")),
         styles["AG_Footer"],
     ))
 
@@ -312,10 +351,6 @@ def generate_pdf_report(
 # ──────────────────────────────────────────────
 #  API Endpoint
 # ──────────────────────────────────────────────
-
-from pydantic import BaseModel, Field
-from typing import Optional
-
 
 class PDFReportRequest(BaseModel):
     """Request to generate a downloadable PDF report."""
@@ -333,70 +368,49 @@ class PDFReportRequest(BaseModel):
         "Forensic AI findings, and Monte Carlo stress test results. "
         "Returns the PDF as a downloadable file."
     ),
+    dependencies=[Depends(rate_limit)],
 )
 async def api_generate_pdf(request: PDFReportRequest):
     """Generate and return a PDF report."""
-    from scraper import resolve_ticker_to_cik, fetch_financial_data_from_edgar
-    from risk_engine import calculate_altman_z_score, run_monte_carlo_simulation
-    from forensic_analyzer import analyze_filing_text
-    from scraper import fetch_10k_text_sections
+    from forensic_analyzer import run_forensic_pipeline
+    from risk_engine import run_monte_carlo_simulation
     from models import MonteCarloInput
 
-    ticker = request.ticker.upper()
+    # Same pipeline as the dashboard, so US and international tickers both work
+    audit, financials = await run_forensic_pipeline(request.ticker)
+    ticker = audit.ticker
+    forensic = audit.forensic
 
-    # 1. Resolve company name
-    company_name = ticker
-    try:
-        _, company_name = await resolve_ticker_to_cik(ticker)
-    except Exception:
-        pass
-
-    # 2. Z-Score
-    z_score = None
-    revenue = None
-    try:
-        financials = await fetch_financial_data_from_edgar(ticker)
-        z_score = calculate_altman_z_score(financials)
-        revenue = financials.revenue
-    except Exception:
-        pass
-
-    # 3. Forensic analysis
-    forensic_data = None
-    try:
-        sections = await fetch_10k_text_sections(ticker)
-        mda = sections.get("mda", "")
-        risk_factors = sections.get("risk_factors", "")
-        if mda or risk_factors:
-            result = await analyze_filing_text(mda, risk_factors, z_score)
-            forensic_data = result.model_dump()
-    except Exception:
-        pass
-
-    # 4. Monte Carlo
-    mc_result = None
-    if request.include_monte_carlo:
-        try:
-            mc_input = MonteCarloInput(
-                ticker=ticker,
-                num_simulations=request.mc_simulations,
-                time_horizon_years=request.mc_horizon_years,
-                initial_revenue=revenue,
-            )
-            mc_result = run_monte_carlo_simulation(mc_input)
-        except Exception:
-            pass
-
-    # 5. Generate PDF
-    pdf_bytes = generate_pdf_report(
-        ticker=ticker,
-        company_name=company_name,
-        z_score=z_score,
-        forensic_data=forensic_data,
-        monte_carlo=mc_result,
+    z_score_note = next(
+        (s for s in audit.data_sources if s.startswith(("Z-Score not computed", "Financial data unavailable"))),
+        None,
     )
 
-    filename = f"AlphaGuard_{ticker}_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
+    mc_result = None
+    if request.include_monte_carlo and financials is not None and financials.revenue > 0:
+        mc_result = run_monte_carlo_simulation(MonteCarloInput(
+            ticker=ticker,
+            num_simulations=request.mc_simulations,
+            time_horizon_years=request.mc_horizon_years,
+            initial_revenue=financials.revenue,
+        ))
+
+    pdf_bytes = generate_pdf_report(
+        ticker=ticker,
+        company_name=audit.company_name or ticker,
+        z_score=forensic.z_score_result,
+        forensic_data=(
+            forensic.model_dump()
+            if forensic.truth_score is not None or forensic.linguistic_analysis.total_words_analyzed
+            else None
+        ),
+        monte_carlo=mc_result,
+        data_sources=audit.data_sources,
+        z_score_note=z_score_note,
+    )
+
+    safe_ticker = "".join(ch for ch in ticker if ch.isalnum() or ch in ".-_")
+    filename = f"AlphaGuard_{safe_ticker}_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

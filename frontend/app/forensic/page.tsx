@@ -58,7 +58,7 @@ export default function ForensicPage() {
         ? [
             { label: "Liquidity (X1)", financial: Math.max(0, Math.min(100, (zc.x1_working_capital_to_total_assets + 0.5) * 100)), narrative: 100 - (la?.hedging_score ?? 50) },
             { label: "Profitability (X2)", financial: Math.max(0, Math.min(100, (zc.x2_retained_earnings_to_total_assets + 0.5) * 100)), narrative: 100 - (la?.evasion_score ?? 50) },
-            { label: "Efficiency (X3)", financial: Math.max(0, Math.min(100, zc.x3_ebit_to_total_assets * 100)), narrative: la?.sentiment === "bullish" ? 90 : la?.sentiment === "neutral" ? 50 : 20 },
+            { label: "Efficiency (X3)", financial: Math.max(0, Math.min(100, zc.x3_ebit_to_total_assets * 100)), narrative: la?.sentiment === "bullish" ? 90 : la?.sentiment === "bearish" ? 20 : 50 },
             { label: "Leverage (X4)", financial: Math.max(0, Math.min(100, zc.x4_market_cap_to_total_liabilities * 20)), narrative: f.truth_score ?? 50 },
         ]
         : undefined;
@@ -67,8 +67,8 @@ export default function ForensicPage() {
 
     const metrics = [
         {
-            label: "Hedging Density",
-            value: la ? `${la.hedging_score.toFixed(1)}%` : "—",
+            label: "Hedging Score",
+            value: la ? la.hedging_score.toFixed(1) : "—",
             color: la && la.hedging_score > 50 ? "var(--red)" : la && la.hedging_score > 25 ? "var(--amber)" : "var(--green)",
         },
         {
@@ -77,7 +77,7 @@ export default function ForensicPage() {
             color: la && la.evasion_score > 50 ? "var(--red)" : la && la.evasion_score > 25 ? "var(--amber)" : "var(--green)",
         },
         {
-            label: "Sentiment",
+            label: la?.sentiment_source === "lexicon" ? "Sentiment (Lexicon)" : la?.sentiment_source === "ai" ? "Sentiment (AI)" : "Sentiment",
             value: la ? la.sentiment.toUpperCase() : "—",
             color: la?.sentiment === "bullish" ? "var(--green)" : la?.sentiment === "bearish" ? "var(--red)" : "var(--amber)",
         },
@@ -130,11 +130,13 @@ export default function ForensicPage() {
                 )}
 
                 {/* ── AI Offline ── */}
-                {auditResult && !auditResult.gemini_active && !isLoading && (
+                {auditResult && !auditResult.gemini_active && auditResult.truth_score_mode !== "demo" && !isLoading && (
                     <AnimatedSection className="mb-6">
                         <div style={{ background: "var(--amber-tint)", borderLeft: "4px solid var(--amber)", borderRadius: "0 4px 4px 0", padding: "12px 16px" }}>
                             <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--amber)", marginBottom: 3 }}>AI Analyst Offline</p>
-                            <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 13, color: "var(--ink-2)" }}>Reverting to Heuristic Math Models.</p>
+                            <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 13, color: "var(--ink-2)" }}>
+                                {auditResult.ai_error ?? "Reverting to heuristic models."}
+                            </p>
                         </div>
                     </AnimatedSection>
                 )}
@@ -193,7 +195,30 @@ export default function ForensicPage() {
                                         deceptionAlert={f.deception_alert}
                                         deceptionReason={f.deception_reason ?? undefined}
                                         aiConfidenceScore={f.ai_confidence_score}
+                                        isDemo={auditResult?.truth_score_mode === "demo"}
                                     />
+                                    {(f.truth_score_breakdown || f.analysis_note) && (
+                                        <div style={{ marginTop: 8, padding: "10px 14px", background: "var(--paper-2)", border: "1px solid var(--rule)", borderRadius: 4 }}>
+                                            {f.truth_score_breakdown && f.truth_score_breakdown.basis !== "demo" && (
+                                                <p style={{ fontFamily: "var(--font-ibm-plex-mono, monospace)", fontSize: 10, color: "var(--ink-2)", lineHeight: 1.6 }}>
+                                                    100 − hedging {f.truth_score_breakdown.hedging_penalty}
+                                                    {" "}− evasion {f.truth_score_breakdown.evasion_penalty}
+                                                    {" "}− red flags {f.truth_score_breakdown.red_flag_penalty}
+                                                    {" "}− sentiment gap {f.truth_score_breakdown.sentiment_gap_penalty}
+                                                    <br />
+                                                    <span style={{ color: "var(--ink-faint)" }}>
+                                                        Basis: {f.truth_score_breakdown.basis === "heuristic" ? "lexicon heuristics only" : "Gemini + lexicon heuristics"}
+                                                        {la?.net_tone != null && ` · Net tone ${la.net_tone > 0 ? "+" : ""}${la.net_tone.toFixed(2)}`}
+                                                    </span>
+                                                </p>
+                                            )}
+                                            {f.analysis_note && (
+                                                <p style={{ fontFamily: "var(--font-ibm-plex-sans, system-ui, sans-serif)", fontSize: 11, color: "var(--ink-faint)", marginTop: f.truth_score_breakdown ? 6 : 0 }}>
+                                                    {f.analysis_note}
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
                                 </AnimatedSection>
                                 <AnimatedSection delay={0.1} className="lg:col-span-2">
                                     <RiskRadar data={radarData} />

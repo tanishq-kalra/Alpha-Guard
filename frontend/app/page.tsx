@@ -14,6 +14,7 @@ import {
   fetchCompanyInfo,
   runMonteCarlo,
   checkConfigStatus,
+  zScoreComponentRows,
   type ZScoreResult,
   type MonteCarloResult,
 } from "@/lib/api";
@@ -59,13 +60,13 @@ export default function DashboardPage() {
         companyName,
         score: result.score,
         zone: result.zone,
-        components: [
-          { label: "X1 — Working Capital / Total Assets", value: result.components.x1_working_capital_to_total_assets, weight: 1.2 },
-          { label: "X2 — Retained Earnings / Total Assets", value: result.components.x2_retained_earnings_to_total_assets, weight: 1.4 },
-          { label: "X3 — EBIT / Total Assets", value: result.components.x3_ebit_to_total_assets, weight: 3.3 },
-          { label: "X4 — Market Cap / Total Liabilities", value: result.components.x4_market_cap_to_total_liabilities, weight: 0.6 },
-          { label: "X5 — Revenue / Total Assets", value: result.components.x5_revenue_to_total_assets, weight: 1.0 },
-        ],
+        components: zScoreComponentRows(result),
+        modelLabel: result.model_label,
+        safeThreshold: result.safe_threshold,
+        distressThreshold: result.distress_threshold,
+        source: financials.fiscal_period_end
+          ? `${financials.sector ? "Yahoo Finance" : "SEC EDGAR 10-K"} · FY ending ${financials.fiscal_period_end}`
+          : undefined,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
@@ -167,9 +168,9 @@ export default function DashboardPage() {
               overflow: "hidden",
             }}>
               {[
-                { label: "Platform", value: "Alpha-Guard v0.3" },
+                { label: "Platform", value: "Alpha-Guard v0.4" },
                 { label: "Coverage", value: "SEC EDGAR · NYSE · BSE" },
-                { label: "Model", value: "Altman Z-Score (1968)" },
+                { label: "Model", value: "Altman Z / Z'' (auto)" },
               ].map((item, i) => (
                 <div
                   key={i}
@@ -236,9 +237,9 @@ export default function DashboardPage() {
               accentColor={zScore ? colorFor(zScore.components.x3_ebit_to_total_assets) : "amber"}
             />
             <MetricCard
-              label="Market Leverage"
+              label={zScore?.x4_basis === "book" ? "Book Leverage" : "Market Leverage"}
               value={zScore ? zScore.components.x4_market_cap_to_total_liabilities.toFixed(4) : "—.——"}
-              subtitle="X4 · Market Cap / Liabilities"
+              subtitle={zScore?.x4_basis === "book" ? "X4 · Book Equity / Liabilities" : "X4 · Market Cap / Liabilities"}
               trend={zScore ? trendFor(zScore.components.x4_market_cap_to_total_liabilities) : "neutral"}
               accentColor={zScore ? colorFor(zScore.components.x4_market_cap_to_total_liabilities) : "green"}
             />

@@ -2,10 +2,10 @@
  * Alpha-Guard — API Client
  * =========================
  * Centralized fetch wrapper for all backend API calls.
- * Backend runs on http://localhost:8000
+ * Set NEXT_PUBLIC_API_URL to point at a different backend (e.g. http://localhost:8000).
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://alpha-guard-backend.onrender.com";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://alpha-guard-backend.onrender.com";
 
 // ── Types matching backend Pydantic models ──
 
@@ -23,9 +23,13 @@ export interface FinancialData {
     current_liabilities: number;
     retained_earnings: number;
     ebit: number;
-    market_cap: number;
+    market_cap: number | null;
     total_liabilities: number;
     revenue: number;
+    sic_code?: number | null;
+    sector?: string | null;
+    fiscal_period_end?: string | null;
+    z_model?: "auto" | "original" | "z_double_prime";
 }
 
 export interface ZScoreComponents {
@@ -42,6 +46,38 @@ export interface ZScoreResult {
     zone: "Safe" | "Gray" | "Distress";
     components: ZScoreComponents;
     interpretation: string;
+    model: "original" | "z_double_prime";
+    model_label: string;
+    weights: Record<"x1" | "x2" | "x3" | "x4" | "x5", number>;
+    safe_threshold: number;
+    distress_threshold: number;
+    x4_basis: "market" | "book";
+}
+
+export interface ZScoreComponentRow {
+    key: "x1" | "x2" | "x3" | "x4" | "x5";
+    label: string;
+    value: number;
+    weight: number;
+}
+
+/** Component rows for the model actually used; components with zero weight are omitted. */
+export function zScoreComponentRows(z: ZScoreResult): ZScoreComponentRow[] {
+    const c = z.components;
+    const w = z.weights ?? { x1: 1.2, x2: 1.4, x3: 3.3, x4: 0.6, x5: 1.0 };
+    const rows: ZScoreComponentRow[] = [
+        { key: "x1", label: "X1 — Working Capital / Total Assets", value: c.x1_working_capital_to_total_assets, weight: w.x1 },
+        { key: "x2", label: "X2 — Retained Earnings / Total Assets", value: c.x2_retained_earnings_to_total_assets, weight: w.x2 },
+        { key: "x3", label: "X3 — EBIT / Total Assets", value: c.x3_ebit_to_total_assets, weight: w.x3 },
+        {
+            key: "x4",
+            label: z.x4_basis === "book" ? "X4 — Book Equity / Total Liabilities" : "X4 — Market Cap / Total Liabilities",
+            value: c.x4_market_cap_to_total_liabilities,
+            weight: w.x4,
+        },
+        { key: "x5", label: "X5 — Revenue / Total Assets", value: c.x5_revenue_to_total_assets, weight: w.x5 },
+    ];
+    return rows.filter((r) => r.weight !== 0);
 }
 
 export interface RedFlag {
@@ -49,6 +85,7 @@ export interface RedFlag {
     category: string;
     severity: number;
     explanation: string;
+    verified?: boolean | null;
 }
 
 export interface LinguisticAnalysis {
@@ -56,20 +93,33 @@ export interface LinguisticAnalysis {
     evasion_score: number;
     sentiment: string;
     sentiment_confidence: number;
+    sentiment_source?: "ai" | "lexicon" | null;
+    net_tone?: number | null;
     hedging_words_found: string[];
     suspicious_sentences: RedFlag[];
     total_words_analyzed: number;
 }
 
+export interface TruthScoreBreakdown {
+    hedging_penalty: number;
+    evasion_penalty: number;
+    red_flag_penalty: number;
+    sentiment_gap_penalty: number;
+    basis: "ai+heuristic" | "heuristic" | "demo";
+}
+
 export interface ForensicResult {
-    truth_score: number;
-    truth_zone: string;
+    /** null when there was not enough filing text to judge */
+    truth_score: number | null;
+    truth_zone: string | null;
     linguistic_analysis: LinguisticAnalysis;
     red_flags: RedFlag[];
     deception_alert: boolean;
     deception_reason: string | null;
     z_score_result: ZScoreResult | null;
     ai_confidence_score: number | null;
+    truth_score_breakdown: TruthScoreBreakdown | null;
+    analysis_note: string | null;
 }
 
 export interface ForensicAuditResponse {
@@ -79,6 +129,9 @@ export interface ForensicAuditResponse {
     forensic: ForensicResult;
     data_sources: string[];
     gemini_active: boolean;
+    ai_error: string | null;
+    /** "demo" = simulated Truth Score, fixed per ticker (not an analysis result) */
+    truth_score_mode?: "demo" | "computed";
 }
 
 export interface HealthCheck {
@@ -160,6 +213,7 @@ export interface MonteCarloInput {
     initial_revenue?: number;
     revenue_growth_mean?: number;
     revenue_growth_std?: number;
+    seed?: number;
 }
 
 export interface MonteCarloResult {
@@ -188,6 +242,8 @@ export async function runMonteCarlo(params: MonteCarloInput): Promise<MonteCarlo
 
 export interface ConfigStatus {
     gemini_configured: boolean;
+    gemini_model?: string;
+    rate_limit_per_minute?: number;
 }
 
 export async function checkConfigStatus(): Promise<ConfigStatus> {

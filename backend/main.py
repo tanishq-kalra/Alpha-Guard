@@ -6,13 +6,13 @@ Forensic Credit Risk Analysis Platform
 API Documentation: http://localhost:8000/docs
 """
 
-import os
 from dotenv import load_dotenv
 load_dotenv()  # Load .env before anything else reads os.environ
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import ALLOWED_ORIGINS, GEMINI_MODEL, RATE_LIMIT_PER_MINUTE, VERSION, gemini_api_key
 from risk_engine import router as risk_router
 from scraper import router as data_router
 from forensic_analyzer import router as forensic_router
@@ -35,7 +35,7 @@ app = FastAPI(
         "- Truth Score & Deception Alerts\n\n"
         "Built with FastAPI · Pandas · NumPy · Google Gemini"
     ),
-    version="0.3.0",
+    version=VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -43,7 +43,7 @@ app = FastAPI(
 # CORS — allow the Next.js frontend to communicate
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,  # set ALLOWED_ORIGINS in production
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -72,7 +72,7 @@ async def root():
     return {
         "status": "operational",
         "platform": "Alpha-Guard",
-        "version": "0.3.0",
+        "version": VERSION,
         "modules": ["risk_engine", "data_ingestion", "forensic_ai", "global_markets"],
         "docs": "/docs",
     }
@@ -86,5 +86,7 @@ async def root():
 )
 async def config_status():
     return {
-        "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "gemini_configured": gemini_api_key() is not None,
+        "gemini_model": GEMINI_MODEL,
+        "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
     }

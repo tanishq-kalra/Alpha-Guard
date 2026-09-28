@@ -8,6 +8,7 @@ interface TruthScoreGaugeProps {
     deceptionAlert?: boolean;
     deceptionReason?: string;
     aiConfidenceScore?: number | null;
+    isDemo?: boolean;
 }
 
 export default function TruthScoreGauge({
@@ -16,7 +17,9 @@ export default function TruthScoreGauge({
     deceptionAlert = false,
     deceptionReason,
     aiConfidenceScore,
+    isDemo = false,
 }: TruthScoreGaugeProps) {
+    // Rendered after the audit returns, so a null score means "not scored", not "loading"
     const isPending = score === null || zone === null;
 
     const radius = 80;
@@ -92,7 +95,25 @@ export default function TruthScoreGauge({
                         Credibility Index
                     </p>
                 </div>
-                {aiConfidenceScore != null && (
+                {isDemo && (
+                    <span
+                        title="Simulated value, fixed per ticker. Not an analysis result."
+                        style={{
+                            marginLeft: "auto",
+                            padding: "2px 8px",
+                            borderRadius: 3,
+                            background: "var(--amber-tint)",
+                            color: "var(--amber)",
+                            fontFamily: "var(--font-ibm-plex-mono, monospace)",
+                            fontSize: 9,
+                            fontWeight: 600,
+                            letterSpacing: "0.12em",
+                        }}
+                    >
+                        DEMO
+                    </span>
+                )}
+                {!isDemo && aiConfidenceScore != null && (
                     <span
                         style={{
                             marginLeft: "auto",
@@ -142,19 +163,17 @@ export default function TruthScoreGauge({
                     )}
                     {/* Score number */}
                     {isPending ? (
-                        <foreignObject x={cx - 15} y={cy - 20} width="30" height="30">
-                            <div
-                                style={{
-                                    width: 20,
-                                    height: 20,
-                                    border: `2px solid var(--rule)`,
-                                    borderTopColor: "var(--ink-faint)",
-                                    borderRadius: "50%",
-                                    animation: "spin 0.8s linear infinite",
-                                    margin: "auto",
-                                }}
-                            />
-                        </foreignObject>
+                        <text
+                            x={cx}
+                            y={cy - 8}
+                            textAnchor="middle"
+                            fontFamily="var(--font-source-serif, Georgia, serif)"
+                            fontWeight="700"
+                            fill="var(--ink-faint)"
+                            fontSize="34"
+                        >
+                            N/A
+                        </text>
                     ) : (
                         <text
                             x={cx}
@@ -176,7 +195,7 @@ export default function TruthScoreGauge({
                         fill="var(--ink-faint)"
                         fontSize="10"
                     >
-                        {isPending ? "PENDING" : "/ 100"}
+                        {isPending ? "NOT SCORED" : "/ 100"}
                     </text>
                 </svg>
             </div>
@@ -197,7 +216,7 @@ export default function TruthScoreGauge({
                     marginBottom: 14,
                 }}
             >
-                {isPending ? "Pending Analysis" : zone}
+                {isPending ? "Insufficient filing text" : zone}
             </div>
 
             {/* Zone scale bar */}

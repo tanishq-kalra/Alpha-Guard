@@ -14,6 +14,10 @@ export interface RiskOverviewData {
         value: number;
         weight: number;
     }[];
+    modelLabel?: string;
+    safeThreshold?: number;
+    distressThreshold?: number;
+    source?: string;
 }
 
 interface RiskOverviewProps {
@@ -66,8 +70,15 @@ export default function RiskOverview({ data }: RiskOverviewProps) {
     const zone = zoneConfig[d.zone];
     const hasData = d.ticker !== "—";
 
-    // Normalize score: 0→-2 range, 100→6+ range
-    const gaugePercent = Math.min(100, Math.max(0, ((d.score + 2) / 8) * 100));
+    // Gauge scale runs from -2 to 6; zone bands use the active model's thresholds
+    const GAUGE_MIN = -2;
+    const GAUGE_SPAN = 8;
+    const toPercent = (v: number) => Math.min(100, Math.max(0, ((v - GAUGE_MIN) / GAUGE_SPAN) * 100));
+    const safeThreshold = d.safeThreshold ?? 2.99;
+    const distressThreshold = d.distressThreshold ?? 1.81;
+    const gaugePercent = toPercent(d.score);
+    const distressPercent = toPercent(distressThreshold);
+    const grayPercent = toPercent(safeThreshold) - distressPercent;
 
     return (
         <div
@@ -292,8 +303,8 @@ export default function RiskOverview({ data }: RiskOverviewProps) {
                                     display: "flex",
                                 }}
                             >
-                                <div style={{ width: "23.8%", background: "var(--red-tint)" }} />
-                                <div style={{ width: "14.9%", background: "var(--amber-tint)" }} />
+                                <div style={{ width: `${distressPercent}%`, background: "var(--red-tint)" }} />
+                                <div style={{ width: `${grayPercent}%`, background: "var(--amber-tint)" }} />
                                 <div style={{ flex: 1, background: "var(--green-tint)" }} />
 
                                 {/* Score tick marker */}
@@ -322,9 +333,9 @@ export default function RiskOverview({ data }: RiskOverviewProps) {
                                     marginTop: 4,
                                 }}
                             >
-                                <span>0.00</span>
-                                <span>1.81</span>
-                                <span>2.99</span>
+                                <span>≤ −2.00</span>
+                                <span>{distressThreshold.toFixed(2)}</span>
+                                <span>{safeThreshold.toFixed(2)}</span>
                                 <span>6.00+</span>
                             </div>
                         </div>
@@ -440,7 +451,7 @@ export default function RiskOverview({ data }: RiskOverviewProps) {
                         color: "var(--ink-faint)",
                     }}
                 >
-                    Source: SEC EDGAR 10-K · Annual Filing
+                    Source: {d.source ?? "SEC EDGAR 10-K · Annual Filing"}
                 </span>
                 <span
                     style={{
@@ -449,7 +460,7 @@ export default function RiskOverview({ data }: RiskOverviewProps) {
                         color: "var(--ink-faint)",
                     }}
                 >
-                    Model: Altman (1968) · Public Mfg.
+                    Model: {d.modelLabel ?? "Altman (1968) · Public Mfg."}
                 </span>
             </div>
         </div>

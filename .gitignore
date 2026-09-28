@@ -32,3 +32,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# Test / tooling caches
+.pytest_cache/

@@ -4,9 +4,15 @@ Alpha-Guard — Risk Engine Tests
 Validates the Altman Z-Score calculation against known financial profiles.
 """
 
+import numpy as np
 import pytest
-from models import FinancialData
-from risk_engine import calculate_altman_z_score
+from models import FinancialData, MonteCarloInput
+from risk_engine import (
+    ZScoreNotApplicable,
+    calculate_altman_z_score,
+    classify_zone,
+    run_monte_carlo_simulation,
+)
 
 
 class TestAltmanZScore:
@@ -147,3 +153,101 @@ class TestAltmanZScore:
 
         assert result.components.x2_retained_earnings_to_total_assets < 0
         assert isinstance(result.score, float)
+
+
+class TestModelSelection:
+    """Altman variant selection and the Z'' model."""
+
+    BASE = {
+        "ticker": "TEST",
+        "total_assets": 1_000_000,
+        "current_assets": 500_000,
+        "current_liabilities": 200_000,
+        "retained_earnings": 300_000,
+        "ebit": 150_000,
+        "market_cap": 2_000_000,
+        "total_liabilities": 400_000,
+        "revenue": 800_000,
+    }
+
+    def _data(self, **overrides) -> FinancialData:
+        return FinancialData(**{**self.BASE, **overrides})
+
+    def test_manufacturer_uses_original_model(self):
+        result = calculate_altman_z_score(self._data(sic_code=3571))
+        assert result.model == "original"
+        assert result.x4_basis == "market"
+        assert result.weights["x5"] == 1.0
+
+    def test_non_manufacturer_uses_z_double_prime(self):
+        result = calculate_altman_z_score(self._data(sic_code=7372))
+        assert result.model == "z_double_prime"
+        assert result.x4_basis == "book"
+        # X4 = book equity / liabilities = (1.0M - 0.4M) / 0.4M = 1.5
+        assert abs(result.components.x4_market_cap_to_total_liabilities - 1.5) < 1e-9
+        # 6.56*0.3 + 3.26*0.3 + 6.72*0.15 + 1.05*1.5 = 1.968 + 0.978 + 1.008 + 1.575
+        assert abs(result.score - 5.529) < 1e-6
+        assert result.safe_threshold == 2.60
+
+    def test_missing_market_cap_uses_z_double_prime(self):
+        result = calculate_altman_z_score(self._data(market_cap=None))
+        assert result.model == "z_double_prime"
+
+    def test_yahoo_sourced_data_uses_z_double_prime(self):
+        result = calculate_altman_z_score(self._data(sector="Technology"))
+        assert result.model == "z_double_prime"
+
+    def test_manual_input_keeps_original_model(self):
+        assert calculate_altman_z_score(self._data()).model == "original"
+
+    def test_explicit_model_override(self):
+        result = calculate_altman_z_score(self._data(sic_code=3571, z_model="z_double_prime"))
+        assert result.model == "z_double_prime"
+
+    def test_original_model_requires_market_cap(self):
+        with pytest.raises(ValueError):
+            calculate_altman_z_score(self._data(market_cap=None, z_model="original"))
+
+    @pytest.mark.parametrize("overrides", [{"sic_code": 6021}, {"sector": "Financial Services"}])
+    def test_financial_companies_rejected(self, overrides):
+        with pytest.raises(ZScoreNotApplicable):
+            calculate_altman_z_score(self._data(**overrides))
+
+    def test_z_double_prime_zones(self):
+        assert classify_zone(2.7, "z_double_prime")[0] == "Safe"
+        assert classify_zone(2.0, "z_double_prime")[0] == "Gray"
+        assert classify_zone(1.0, "z_double_prime")[0] == "Distress"
+
+
+class TestMonteCarlo:
+
+    def _params(self, **overrides) -> MonteCarloInput:
+        return MonteCarloInput(**{
+            "ticker": "TEST", "num_simulations": 2_000, "time_horizon_years": 5,
+            "initial_revenue": 1e9, "seed": 42, **overrides,
+        })
+
+    def test_seed_makes_runs_reproducible(self):
+        a = run_monte_carlo_simulation(self._params())
+        b = run_monte_carlo_simulation(self._params())
+        assert a.mean_final_revenue == b.mean_final_revenue
+
+    def test_output_shapes(self):
+        result = run_monte_carlo_simulation(self._params())
+        assert len(result.sample_paths) == 6  # year 0..5
+        assert len(result.histogram) == 20
+        assert sum(h["count"] for h in result.histogram) == 2_000
+        assert result.sample_paths[0]["median"] == 1e9
+
+    def test_percentile_bands_are_ordered(self):
+        for row in run_monte_carlo_simulation(self._params()).sample_paths:
+            assert row["p5"] <= row["p25"] <= row["median"] <= row["p75"] <= row["p95"]
+
+    def test_zero_volatility_is_deterministic_growth(self):
+        result = run_monte_carlo_simulation(self._params(revenue_growth_std=0.0, revenue_growth_mean=0.05))
+        assert result.probability_of_decline == 0.0
+        assert abs(result.median_final_revenue - 1e9 * np.exp(0.25)) < 1
+
+    def test_billion_scale_histogram_labels(self):
+        label = run_monte_carlo_simulation(self._params()).histogram[-1]["range"]
+        assert label.endswith("B")
