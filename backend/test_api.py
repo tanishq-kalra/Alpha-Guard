@@ -217,3 +217,16 @@ def test_pdf_includes_earnings_call(monkeypatch):
     monkeypatch.setattr(earnings_call, "fetch_call_material", material)
     resp = client.post("/api/reports/generate-pdf", json={"ticker": "TEST"})
     assert resp.status_code == 200 and resp.content.startswith(b"%PDF")
+
+
+def test_international_ticker_skips_call_lookup(monkeypatch):
+    import earnings_call
+    _stub_sources(monkeypatch)
+
+    async def must_not_run(ticker, allow_sec=True):
+        raise AssertionError("Alpha Vantage must not be queried for non-US tickers")
+
+    monkeypatch.setattr(earnings_call, "fetch_call_material", must_not_run)
+    body = client.post("/api/risk/forensic-audit", json={"ticker": "RELIANCE.NS"}).json()
+    call = body["earnings_call"]
+    assert call["available"] is False and "US-listed companies only" in call["note"]

@@ -35,6 +35,11 @@ router = APIRouter(prefix="/api/risk", tags=["Forensic AI Analysis"])
 
 # Below this many MD&A words there is not enough narrative to judge credibility
 MIN_WORDS_FOR_ANALYSIS = 300
+
+INTERNATIONAL_CALL_NOTE = (
+    "Earnings call transcripts are available for US-listed companies only "
+    "(Alpha Vantage and SEC filings); this analysis is not available for this exchange."
+)
 # Same cap as a 10-K section, for the earnings-release fallback
 MAX_LANGUAGE_CHARS = 40_000
 
@@ -579,7 +584,6 @@ async def run_forensic_pipeline(ticker: str) -> tuple[ForensicAuditResponse, Fin
         fetch_10k_text_sections,
         get_company_name,
         is_international_ticker,
-        normalize_ticker,
     )
     from risk_engine import ZScoreNotApplicable, calculate_altman_z_score
     from earnings_call import build_call_analysis, fetch_call_material, fetch_earnings_release
@@ -605,9 +609,12 @@ async def run_forensic_pipeline(ticker: str) -> tuple[ForensicAuditResponse, Fin
             return None, e
 
     async def _call_material():
+        if international:
+            # Alpha Vantage transcripts and SEC releases cover US-listed companies only;
+            # asking anyway spends 3-4 of the 25 daily requests on a guaranteed miss.
+            return {"error": INTERNATIONAL_CALL_NOTE}
         try:
-            # SEC press releases are US-only; transcripts cover any ticker Alpha Vantage knows
-            return await fetch_call_material(normalize_ticker(ticker), allow_sec=not international)
+            return await fetch_call_material(ticker)
         except Exception as e:
             return {"error": f"Earnings call lookup failed: {str(e)[:120]}"}
 
